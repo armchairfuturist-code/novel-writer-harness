@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "storyforge"
+version = "0.1.0"
+description = "Autonomous novel-writing pipeline. Give it a seed concept, get a complete novel."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "httpx>=0.27",
+]
+
+[project.urls]
+Homepage = "https://github.com/armchairfuturist-code/novel-writer-harness"
