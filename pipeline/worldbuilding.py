@@ -79,4 +79,5 @@ def run_worldbuilding(spec: dict) -> dict:
         else:
             world = {"raw_worldbuilding": content}
 
+    client.close()
     return world

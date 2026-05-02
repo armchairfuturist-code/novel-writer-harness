@@ -47,7 +47,7 @@ class ChapterConfig:
     min_chapters: int = 8
     max_chapters: int = 30
     context_carry_window: int = 3            # Number of previous chapters to include
-    auto_compress_at_tokens: int = 900000    # Trigger context compression (gemini-writer inspired)
+    auto_compress_at_tokens: int = 900000    # RESERVED: context compression not yet implemented
 
 
 class Config:
@@ -68,6 +68,14 @@ class Config:
 
         # --- API Configuration ---
         self.api_key: str = self._get_env("CROFAI_API_KEY", "CROFAI_API_KEY")
+        if not self.api_key:
+            raise ValueError(
+                "CROFAI_API_KEY environment variable not set. "
+                "Set it before running the pipeline:\n"
+                "  export CROFAI_API_KEY='your-key-here'   (Mac/Linux)\n"
+                "  set CROFAI_API_KEY=your-key-here        (Windows CMD)\n"
+                "  $env:CROFAI_API_KEY='your-key-here'     (PowerShell)"
+            )
         self.base_url: str = "https://beta.crof.ai/v1"
 
         # --- Model Aliases (crofai model names) ---
@@ -137,4 +145,4 @@ class Config:
 
     def model_for_benchmark(self, alias: str) -> ModelConfig:
         """Get model config for benchmark variants."""
-        return self.models.get(alias, self.models["kimi-balanced"])
+        return self.benchmark_models.get(alias, self.benchmark_models["kimi-k2.6-test"])

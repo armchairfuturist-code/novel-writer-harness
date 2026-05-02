@@ -33,6 +33,7 @@ import os
 import sys
 import time
 from datetime import datetime
+from typing import Optional
 
 # Ensure we can import from the skill directory
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -63,7 +64,7 @@ def slugify(text: str) -> str:
     return text[:60]
 
 
-def run_full_pipeline(concept: str, config: Optional[Config] = None) -> str:
+def run_full_pipeline(concept: str, config: Optional[Config] = None, resume_from: int = 1, quick: bool = False) -> str:
     """Run the full StoryForge pipeline from seed to export.
 
     Args:
@@ -148,7 +149,7 @@ def run_full_pipeline(concept: str, config: Optional[Config] = None) -> str:
     chapters_dir = os.path.join(project_dir, "chapters")
     os.makedirs(chapters_dir, exist_ok=True)
 
-    chapters = run_draft(spec, world, characters, outline, project_dir, config)
+    chapters = run_draft(spec, world, characters, outline, project_dir, config, resume_from=resume_from)
     elapsed = time.time() - start
 
     total_words = sum(c.get("word_count", 0) for c in chapters)
@@ -158,22 +159,26 @@ def run_full_pipeline(concept: str, config: Optional[Config] = None) -> str:
     print(f"  Average chapter score: {avg_score:.1f}/10")
     print(f"  Drafting time: {elapsed:.1f}s ({elapsed/60:.1f}m)\n")
 
-    # Phase 6: Review
-    print("=== Phase 5b/6: Review ===")
-    print(f"  Running full manuscript review...")
-    start = time.time()
-    review = run_full_review(chapters, project_dir, config)
-    elapsed = time.time() - start
+    # Phase 6: Review (skip in quick mode)
+    if not quick:
+        print("=== Phase 5b/6: Review ===")
+        print(f"  Running full manuscript review...")
+        start = time.time()
+        review = run_full_review(chapters, project_dir, config)
+        elapsed = time.time() - start
 
-    print(f"  Overall score: {review.get('overall_avg_score', 'N/A')}/10")
-    print(f"  Total words reviewed: {review.get('total_words', 0)}")
-    if review.get("weakest_chapter"):
-        print(f"  Weakest chapter: Ch {review['weakest_chapter']}")
-    if review.get("needs_revision"):
-        print(f"  Revision needed: YES")
+        print(f"  Overall score: {review.get('overall_avg_score', 'N/A')}/10")
+        print(f"  Total words reviewed: {review.get('total_words', 0)}")
+        if review.get("weakest_chapter"):
+            print(f"  Weakest chapter: Ch {review['weakest_chapter']}")
+        if review.get("needs_revision"):
+            print(f"  Revision needed: YES")
+        else:
+            print(f"  Revision needed: NO - manuscript meets quality threshold")
+        print(f"  Review time: {elapsed:.1f}s\n")
     else:
-        print(f"  Revision needed: NO - manuscript meets quality threshold")
-    print(f"  Review time: {elapsed:.1f}s\n")
+        print("=== Phase 5b/6: Review ===")
+        print(f"  Skipped (--quick mode)\n")
 
     # Phase 7: Export
     print("=== Phase 6/6: Export ===")
@@ -246,7 +251,7 @@ def main():
         print("\nError: provide a seed concept or use --benchmark")
         sys.exit(1)
 
-    run_full_pipeline(args.concept, config)
+    run_full_pipeline(args.concept, config, resume_from=args.resume, quick=args.quick)
 
 
 if __name__ == "__main__":

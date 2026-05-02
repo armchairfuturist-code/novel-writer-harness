@@ -112,8 +112,6 @@ def run_full_review(
     chapters: list[dict], project_dir: str, config: Optional[Config] = None
 ) -> dict:
     config = config or Config()
-    client = CrofaiClient(config)
-    model = config.model_for_phase("final_review")
 
     per_chapter = []
     all_scores = []
@@ -159,7 +157,6 @@ def run_full_review(
         "needs_revision": avg_score < config.scoring.target_chapter_score,
     }
 
-    client.close()
     return result
 
 

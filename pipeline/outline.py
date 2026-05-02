@@ -144,4 +144,5 @@ def run_outline(spec: dict, world: dict, characters: dict, structure: str = "thr
         else:
             outline = {"raw_outline": content}
 
+    client.close()
     return outline

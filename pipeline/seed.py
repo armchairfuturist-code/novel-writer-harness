@@ -84,4 +84,5 @@ def run_seed(concept: str) -> dict:
         if key not in spec:
             spec[key] = f"MISSING: {key}"
 
+    client.close()
     return spec

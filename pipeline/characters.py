@@ -106,4 +106,5 @@ def run_characters(spec: dict, world: dict) -> dict:
         else:
             chars = {"raw_characters": content}
 
+    client.close()
     return chars
