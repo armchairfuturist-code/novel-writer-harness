@@ -15,7 +15,7 @@ import re
 from typing import Optional
 
 from config import Config
-from pipeline.api import CrofaiClient
+from pipeline.api import CrofaiClient, parse_json_output
 
 REVIEW_SYSTEM_PROMPT_CRITIC = """You are a relentless literary critic. Your job is to
 find every flaw in this chapter and explain exactly why it doesn't work. Be specific.
@@ -88,21 +88,7 @@ Return a JSON object with:
         temperature=0.4,
     )
 
-    content = content.strip()
-    if content.startswith("```"):
-        lines = content.splitlines()
-        cleaned = [l for l in lines if not l.startswith("```")]
-        content = "\n".join(cleaned)
-
-    try:
-        review = json.loads(content)
-    except json.JSONDecodeError:
-        start = content.find("{")
-        end = content.rfind("}")
-        if start != -1 and end != -1:
-            review = json.loads(content[start:end+1])
-        else:
-            review = {"overall_score": 5.0, "raw_review": content[:500]}
+    review = parse_json_output(content, label="review")
 
     client.close()
     return review

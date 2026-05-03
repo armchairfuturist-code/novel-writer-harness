@@ -17,7 +17,7 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from config import Config
-from pipeline.api import CrofaiClient
+from pipeline.api import CrofaiClient, parse_json_output
 
 
 BENCHMARK_PROMPTS = [
@@ -162,32 +162,16 @@ def evaluate_pair(client, model_config, prompt, story_a, story_b, variant_a, var
 
 
 def _parse_evaluation(raw_text):
-    raw_text = raw_text.strip()
-    if raw_text.startswith("```"):
-        lines = raw_text.splitlines()
-        cleaned = [l for l in lines if not l.startswith("```")]
-        raw_text = "\n".join(cleaned)
-
     try:
-        result = json.loads(raw_text)
-    except json.JSONDecodeError:
-        start = raw_text.find("{")
-        end = raw_text.rfind("}")
-        if start != -1 and end != -1:
-            try:
-                result = json.loads(raw_text[start:end+1])
-            except json.JSONDecodeError:
-                result = {"winner": "A", "margin": 0}
-        else:
-            result = {"winner": "A", "margin": 0}
-
+        result = parse_json_output(raw_text, label="benchmark_evaluation")
+    except RuntimeError:
+        result = {"winner": "A", "margin": 0}
     return {
         "winner": result.get("winner", "A"),
         "margin": result.get("margin", 0),
         "prose_craft": result.get("prose_craft", ""),
         "reasons": result.get("reasons", ""),
     }
-
 
 def run_benchmark():
     config = Config()

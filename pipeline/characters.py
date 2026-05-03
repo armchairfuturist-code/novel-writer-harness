@@ -9,7 +9,7 @@ import json
 from typing import Optional
 
 from config import Config
-from pipeline.api import CrofaiClient
+from pipeline.api import CrofaiClient, parse_json_output
 
 CHAR_SYSTEM_PROMPT = """You are a character architect specializing in nuanced,
 three-dimensional characters. Create characters with genuine interiority -
@@ -90,21 +90,7 @@ def run_characters(spec: dict, world: dict) -> dict:
         temperature=0.8,
     )
 
-    content = content.strip()
-    if content.startswith("```"):
-        lines = content.splitlines()
-        cleaned = [l for l in lines if not l.startswith("```")]
-        content = "\n".join(cleaned)
-
-    try:
-        chars = json.loads(content)
-    except json.JSONDecodeError:
-        start = content.find("{")
-        end = content.rfind("}")
-        if start != -1 and end != -1:
-            chars = json.loads(content[start:end+1])
-        else:
-            chars = {"raw_characters": content}
+    chars = parse_json_output(content, label="characters")
 
     client.close()
     return chars

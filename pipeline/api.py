@@ -1,10 +1,12 @@
-"""crofai API client - unified interface for all model calls.
+"""crofai API client — unified interface for all model calls.
 
 Thin wrapper around httpx for OpenAI-compatible chat completions.
-Handles auth, streaming, retries, and error formatting.
+Handles auth, streaming, retries, caching, and context management.
 """
 
+import hashlib
 import json
+import os
 import time
 from typing import Optional
 
@@ -12,13 +14,108 @@ import httpx
 
 from config import Config, ModelConfig
 
+# Cache directory for API responses (disabled by default)
+CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", ".api-cache")
+
+
+def _cache_key(model: ModelConfig, messages: list[dict], system_prompt: Optional[str]) -> str:
+    """Generate a deterministic cache key from request parameters."""
+    raw = f"{model.name}|{json.dumps(messages, sort_keys=True)}|{system_prompt or ''}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+def _read_cache(cache_key: str) -> Optional[str]:
+    """Read cached response if caching is enabled and key exists."""
+    cache_path = os.path.join(CACHE_DIR, f"{cache_key}.json")
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data["response"]
+        except (json.JSONDecodeError, KeyError, OSError):
+            pass
+    return None
+
+
+def _write_cache(cache_key: str, response: str):
+    """Write response to cache."""
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    cache_path = os.path.join(CACHE_DIR, f"{cache_key}.json")
+    try:
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump({"response": response}, f)
+    except OSError:
+        pass  # Cache writes are best-effort
+
+
+def _unwrap_json(text: str) -> str:
+    """Strip markdown code fences from model output.
+
+    Many models wrap JSON in ```json ... ``` fences. This utility
+    strips fences and returns clean JSON text.
+    """
+    text = text.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        cleaned = [l for l in lines if not l.startswith("```")]
+        text = "\n".join(cleaned)
+    return text
+
+
+def parse_json_output(content: str, label: str = "response") -> dict:
+    """Parse a model's JSON output, handling markdown wrapping and errors.
+
+    Args:
+        content: Raw model response text
+        label: Human-readable label for error messages
+
+    Returns:
+        Parsed dict
+
+    Raises:
+        RuntimeError: If JSON cannot be extracted
+    """
+    content = _unwrap_json(content)
+
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        start = content.find("{")
+        end = content.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                return json.loads(content[start:end+1])
+            except json.JSONDecodeError:
+                pass
+        raise RuntimeError(
+            f"Failed to parse {label} as JSON. "
+            f"Response preview: {content[:300]}"
+        )
+
+
+def _is_retryable(status_code: int) -> bool:
+    """Determine if an HTTP status code should be retried.
+
+    Only retry on:
+    - 429 (rate limited) — may succeed after backoff
+    - 5xx (server errors) — transient issues
+    """
+    return status_code == 429 or (500 <= status_code < 600)
+
 
 class CrofaiClient:
     """HTTP client for crofai OpenAI-compatible API."""
 
-    def __init__(self, config: Optional[Config] = None):
+    def __init__(self, config: Optional[Config] = None, use_cache: bool = False):
         self.config = config or Config()
         self._http = httpx.Client(timeout=120.0)
+        self.use_cache = use_cache
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
     def chat(
         self,
@@ -41,6 +138,13 @@ class CrofaiClient:
         Returns:
             Response text content
         """
+        # Check cache first
+        ck = _cache_key(model, messages, system_prompt)
+        if self.use_cache:
+            cached = _read_cache(ck)
+            if cached is not None:
+                return cached
+
         full_messages = list(messages)
         if system_prompt:
             full_messages.insert(0, {"role": "system", "content": system_prompt})
@@ -67,16 +171,23 @@ class CrofaiClient:
             )
             resp.raise_for_status()
             data = resp.json()
-            return data["choices"][0]["message"]["content"]
+            result = data["choices"][0]["message"]["content"]
+
+            # Cache the result
+            if self.use_cache:
+                _write_cache(ck, result)
+
+            return result
         except httpx.HTTPStatusError as e:
+            status = e.response.status_code
             detail = ""
             try:
-                detail = e.response.text
+                detail = e.response.text[:500]
             except Exception:
                 pass
-            raise RuntimeError(f"crofai API error {e.response.status_code}: {detail}") from e
+            raise RuntimeError(f"API error {status}: {detail}") from e
         except httpx.TimeoutException as e:
-            raise RuntimeError(f"crofai API timeout after {self._http.timeout}s") from e
+            raise RuntimeError(f"API timeout after {self._http.timeout}s") from e
 
     def chat_with_retry(
         self,
@@ -86,15 +197,38 @@ class CrofaiClient:
         max_retries: int = 2,
         **kwargs,
     ) -> str:
-        """Chat completion with automatic retry on failure."""
+        """Chat completion with smart retry.
+
+        Only retries on transient errors (429 rate limit, 5xx server errors).
+        401 (auth), 404, and 400 (bad request) fail immediately.
+        """
         last_error = None
         for attempt in range(max_retries + 1):
             try:
                 return self.chat(model, messages, system_prompt, **kwargs)
             except RuntimeError as e:
                 last_error = e
+                err_msg = str(e)
+
+                # Extract status code from error message
+                status_code = 0
+                for prefix in ["API error ", "crofai API error "]:
+                    if prefix in err_msg:
+                        try:
+                            code_str = err_msg.split(prefix)[1].split(":")[0].strip()
+                            status_code = int(code_str)
+                        except (ValueError, IndexError):
+                            pass
+                        break
+
+                # Don't retry non-transient errors
+                if status_code and not _is_retryable(status_code):
+                    raise
+
                 if attempt < max_retries:
-                    time.sleep(2 ** attempt)
+                    delay = 2 ** attempt
+                    time.sleep(delay)
+
         raise RuntimeError(f"All {max_retries + 1} attempts failed: {last_error}")
 
     def close(self):

@@ -9,7 +9,7 @@ import json
 from typing import Optional
 
 from config import Config
-from pipeline.api import CrofaiClient
+from pipeline.api import CrofaiClient, parse_json_output
 
 STORY_STRUCTURES = {
     "three_act": "Traditional 3-Act structure: Setup -> Confrontation -> Resolution",
@@ -128,21 +128,7 @@ def run_outline(spec: dict, world: dict, characters: dict, structure: str = "thr
         temperature=0.7,
     )
 
-    content = content.strip()
-    if content.startswith("```"):
-        lines = content.splitlines()
-        cleaned = [l for l in lines if not l.startswith("```")]
-        content = "\n".join(cleaned)
-
-    try:
-        outline = json.loads(content)
-    except json.JSONDecodeError:
-        start = content.find("{")
-        end = content.rfind("}")
-        if start != -1 and end != -1:
-            outline = json.loads(content[start:end+1])
-        else:
-            outline = {"raw_outline": content}
+    outline = parse_json_output(content, label="outline")
 
     client.close()
     return outline

@@ -9,7 +9,7 @@ import json
 from typing import Optional
 
 from config import Config
-from pipeline.api import CrofaiClient
+from pipeline.api import CrofaiClient, parse_json_output
 
 WORLD_SYSTEM_PROMPT = """You are a master worldbuilder. Given a story project spec,
 produce a richly detailed world bible. Focus on specificity and internal consistency.
@@ -63,21 +63,7 @@ def run_worldbuilding(spec: dict) -> dict:
         temperature=0.8,
     )
 
-    content = content.strip()
-    if content.startswith("```"):
-        lines = content.splitlines()
-        cleaned = [l for l in lines if not l.startswith("```")]
-        content = "\n".join(cleaned)
-
-    try:
-        world = json.loads(content)
-    except json.JSONDecodeError:
-        start = content.find("{")
-        end = content.rfind("}")
-        if start != -1 and end != -1:
-            world = json.loads(content[start:end+1])
-        else:
-            world = {"raw_worldbuilding": content}
+    world = parse_json_output(content, label="worldbuilding")
 
     client.close()
     return world

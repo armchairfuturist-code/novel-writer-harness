@@ -9,7 +9,7 @@ import json
 from typing import Optional
 
 from config import Config
-from pipeline.api import CrofaiClient
+from pipeline.api import CrofaiClient, parse_json_output
 
 SEED_SYSTEM_PROMPT = """You are a professional story architect. Given a seed concept,
 produce a structured project specification. Be specific and opinionated - don't
@@ -53,31 +53,7 @@ def run_seed(concept: str) -> dict:
         temperature=0.7,
     )
 
-    # Extract JSON from response (handle markdown-wrapped responses gracefully)
-    content = content.strip()
-    if content.startswith("```"):
-        lines = content.splitlines()
-        cleaned = []
-        in_code = False
-        for line in lines:
-            if line.startswith("```"):
-                in_code = not in_code
-                continue
-            if in_code:
-                cleaned.append(line)
-        content = "\n".join(cleaned)
-        if not content:
-            content = "\n".join(lines)
-
-    try:
-        spec = json.loads(content)
-    except json.JSONDecodeError:
-        start = content.find("{")
-        end = content.rfind("}")
-        if start != -1 and end != -1:
-            spec = json.loads(content[start:end+1])
-        else:
-            raise RuntimeError(f"Failed to parse seed output as JSON:\n{content[:500]}")
+    spec = parse_json_output(content, label="seed spec")
 
     required = ["genre", "premise", "tone", "target_chapters"]
     for key in required:
