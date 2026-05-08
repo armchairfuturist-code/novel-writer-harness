@@ -117,7 +117,7 @@ class Config:
         self.chapter = ChapterConfig()
 
         # --- Banned words / cliche list (autonovel-inspired) ---
-        self.banned_words: list[str] = field(default_factory=lambda: [
+        self.banned_words: list[str] = [
             "suddenly", "very", "quite", "literally", "actually",
             "basically", "incredibly", "amazingly", "unbelievably",
             "truly", "certainly", "surely", "obviously", "absolutely",
@@ -125,10 +125,16 @@ class Config:
             "gaze", "smirk", "chuckle", "sigh", "nod",
             "shrug", "blink", "frown", "raise an eyebrow",
             "as if", "as though", "seemed to", "began to", "started to",
-        ])
+        ]
 
         # --- Export defaults ---
         self.project_dir: str = os.path.join(os.path.expanduser("~"), "storyforge-projects")
+
+        # --- Token tracking ---
+        self.track_tokens: bool = True
+        self.token_cost_per_input: float = 0.000002
+        self.token_cost_per_output: float = 0.000010
+        self.report_usage: bool = True
 
     def _get_env(self, *names: str) -> str:
         """Get first available env var from a list of names."""

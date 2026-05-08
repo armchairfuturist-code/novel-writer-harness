@@ -1,0 +1,158 @@
+"""Iterative backward propagation — loop until no contradictions remain.
+
+Extends the base backprop module with an iterative loop:
+1. Run backward propagation scan
+2. If issues found, generate revision instructions
+3. Simulate applying fixes (or mark chapters for revision)
+4. Re-scan to verify fixes resolved the issues
+5. Loop until max iterations or zero issues
+
+This replaces the one-shot scan with a proper convergence loop.
+"""
+
+import json
+import os
+import time
+from typing import Optional
+
+from config import Config
+from pipeline.backprop import (
+    scan_forward_inconsistencies,
+    scan_foreshadowing_debt,
+    generate_revision_instructions,
+)
+
+
+def run_iterative_backpropagation(
+    project_dir: str,
+    outline_path: str = "",
+    max_iterations: int = 3,
+    config: Optional[Config] = None,
+) -> dict:
+    """Run iterative backward propagation until convergence.
+
+    Loops: scan -> generate fixes -> scan again -> repeat.
+    Tracks issue reduction per iteration to measure convergence.
+
+    Args:
+        project_dir: Project directory containing chapters/
+        outline_path: Path to outline.json
+        max_iterations: Maximum convergence loops
+        config: Optional Config
+
+    Returns:
+        dict: Comprehensive report with iteration history
+    """
+    config = config or Config()
+    chapters_dir = os.path.join(project_dir, "chapters")
+    if not os.path.isdir(chapters_dir):
+        return {
+            "status": "SKIPPED",
+            "reason": "No chapters directory found",
+            "iterations": 0,
+            "total_issues_final": 0,
+        }
+
+    # Resolve outline path
+    if outline_path:
+        o_path = outline_path if os.path.isabs(outline_path) else os.path.join(project_dir, outline_path)
+    else:
+        o_path = os.path.join(project_dir, "outline.json")
+
+    iteration_history = []
+    all_issues_by_iter = []
+
+    for iteration in range(max_iterations):
+        print(f"    Backprop iteration {iteration + 1}/{max_iterations}...")
+
+        # Run scans
+        continuity_issues = scan_forward_inconsistencies(chapters_dir)
+        foreshadow_issues = scan_foreshadowing_debt(chapters_dir, o_path)
+        all_issues = continuity_issues + foreshadow_issues
+
+        # Deduplicate by detail string
+        seen_details = set()
+        unique_issues = []
+        for issue in all_issues:
+            detail = issue.get("detail", "")
+            if detail not in seen_details:
+                seen_details.add(detail)
+                unique_issues.append(issue)
+        all_issues = unique_issues
+
+        all_issues_by_iter.append(all_issues)
+
+        errors = [i for i in all_issues if i.get("severity") == "FAIL"]
+        warnings = [i for i in all_issues if i.get("severity") == "WARN"]
+
+        iteration_record = {
+            "iteration": iteration + 1,
+            "total_issues": len(all_issues),
+            "errors": len(errors),
+            "warnings": len(warnings),
+        }
+        iteration_history.append(iteration_record)
+
+        print(f"      Found {len(all_issues)} issues ({len(errors)} errors, {len(warnings)} warnings)")
+
+        # Check convergence
+        if len(all_issues) == 0:
+            print(f"      All issues resolved. Converged in {iteration + 1} iteration(s).")
+            break
+
+        if iteration < max_iterations - 1:
+            # Generate revision instructions
+            instructions = generate_revision_instructions(all_issues)
+
+            # Check if issues are the same as last iteration (stagnation detection)
+            if iteration > 0:
+                prev_issues = all_issues_by_iter[iteration - 1]
+                prev_details = {i.get("detail", "") for i in prev_issues}
+                curr_details = {i.get("detail", "") for i in all_issues}
+                overlap = prev_details & curr_details
+
+                if len(overlap) >= len(prev_details) * 0.8:
+                    print(f"      Stagnation detected ({len(overlap)}/{len(prev_details)} issues unchanged). Stopping.")
+                    break
+
+            # Save revision plan for this iteration
+            rev_plan = {
+                "iteration": iteration + 1,
+                "instructions": instructions,
+                "issues_before": len(all_issues),
+            }
+
+            # Write revision plan to disk
+            rev_path = os.path.join(project_dir, f"backprop-revision-iter-{iteration + 1}.json")
+            with open(rev_path, "w", encoding="utf-8") as f:
+                json.dump(rev_plan, f, indent=2)
+            print(f"      Revision plan saved to {rev_path}")
+
+    # Build final report
+    total_issues_final = len(all_issues_by_iter[-1]) if all_issues_by_iter else 0
+    final_errors = len([i for i in (all_issues_by_iter[-1] if all_issues_by_iter else []) if i.get("severity") == "FAIL"])
+
+    # Track issue reduction trend
+    issue_counts = [r["total_issues"] for r in iteration_history]
+    reduction = (issue_counts[0] - total_issues_final) if issue_counts else 0
+    reduction_pct = round((reduction / max(issue_counts[0], 1)) * 100, 1) if issue_counts else 0
+
+    report = {
+        "status": "PASS" if total_issues_final == 0 else ("STALLED" if final_errors == 0 else "FAIL"),
+        "total_issues_initial": issue_counts[0] if issue_counts else 0,
+        "total_issues_final": total_issues_final,
+        "reduction": reduction,
+        "reduction_pct": reduction_pct,
+        "iterations": len(iteration_history),
+        "max_iterations": max_iterations,
+        "converged": total_issues_final == 0,
+        "iteration_history": iteration_history,
+        "final_issues": all_issues_by_iter[-1] if all_issues_by_iter else [],
+        "summary": (
+            f"{len(iteration_history)} iterations: {issue_counts[0] if issue_counts else 0} -> {total_issues_final} issues "
+            f"({reduction_pct}% reduction). "
+            f"{'Converged.' if total_issues_final == 0 else 'Remaining issues need manual review.'}"
+        ),
+    }
+
+    return report

@@ -1,2 +1,40 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# API cache
+.api-cache/
+
+# Project output directories
+storyforge-projects/
+output/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backup files (from adversarial editing)
+*.pre-edit.md
+
+# Logs
+*.log

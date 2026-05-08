@@ -1,0 +1,72 @@
+{
+  "genre": "thriller",
+  "description": "High-stakes thriller with tension escalation and ticking clock",
+  "beats": [
+    {
+      "phase": "hook",
+      "chapter_range": [1, 2],
+      "required_elements": [
+        "inciting_incident",
+        "protagonist_forced_in",
+        "immediate_danger"
+      ],
+      "description": "Explosive opening that forces the protagonist into action"
+    },
+    {
+      "phase": "escalation",
+      "chapter_range": [3, 7],
+      "required_elements": [
+        "ticking_clock",
+        "pursuit_or_escape",
+        "ally_introduction",
+        "antagonist_reveal"
+      ],
+      "description": "Pressure ratchets, clock is introduced, antagonist shows face"
+    },
+    {
+      "phase": "midpoint_crisis",
+      "chapter_range": [8, 10],
+      "required_elements": [
+        "major_setback",
+        "protagonist_lowest_point",
+        "stakes_raise"
+      ],
+      "description": "Everything goes wrong, the protagonist loses something vital"
+    },
+    {
+      "phase": "second_half_push",
+      "chapter_range": [11, 15],
+      "required_elements": [
+        "regroup",
+        "secondary_antagonist",
+        "plan_reversal"
+      ],
+      "description": "Protagonist regroups with new intel, executes a counter-strategy"
+    },
+    {
+      "phase": "final_confrontation",
+      "chapter_range": [16, 18],
+      "required_elements": [
+        "clock_expires",
+        "showdown",
+        "moral_choice",
+        "aftermath"
+      ],
+      "description": "Everything culminates in a high-stakes finale"
+    }
+  ],
+  "tracking": {
+    "critical_items": ["tension_level", "time_remaining", "antagonist_moves", "protagonist_resources"],
+    "must_track": [
+      "tension per chapter (1-10)",
+      "clock countdown progress",
+      "antagonist advantage shifts",
+      "ally status"
+    ]
+  },
+  "structure": {
+    "recommended_chapters": 18,
+    "tension_arc": "relentless_escalation",
+    "pacing_profile": "fast_sustained"
+  }
+}
