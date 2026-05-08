@@ -17,25 +17,45 @@ from typing import Optional
 
 from config import Config
 from pipeline.api import CrofaiClient
+from pipeline.hindsight_client import HindsightStore
+from pipeline.reio_compression import ReIOCompressor
 
 
 # Style profiles for parallel variant generation
+# Postwriter-inspired rhetorical strategies — each variant uses a distinct
+# narrative approach rather than just a different prose register.
 STYLE_PROFILES = {
-    "lyrical": """Write in a lyrical, image-driven style. Prioritize sensory immersion,
-metaphor, and rhythm. Sentences should breathe. Let silence and implication do work.
-Rich interiority. Unhurried pacing. Literary fiction register.""",
+    "suspense_first": """RHETORICAL STRATEGY: SUSPENSE-FIRST
+Structure this chapter around withholding and revelation. Open with a question or tension.
+Dole out information in controlled releases. End each scene with a hook that demands
+the reader continue. Use short chapters, cliffhangers, and dramatic irony (reader knows
+more than the character, or vice versa). Prioritize 'what happens next' over 'what does it mean.'
+Pacing: tight. Scene length: short to medium. Tension: escalating.""",
 
-    "compressed": """Write in a compressed, propulsive style. Tight sentences. Every word
-earns its place. Minimal exposition. Dialogue-forward. Scene momentum over internal reflection.
-Genre-fiction register. Think Hemingway meets le Carré.""",
+    "reveal_late": """RHETORICAL STRATEGY: REVEAL-LATE
+Structure this chapter around a single significant reveal. Spend the first 60-70% building
+context, deepening character, and planting details that will retroactively gain meaning.
+The last 30-40% delivers the reveal — an action, a piece of information, a character choice
+that recontextualizes everything that came before. The reader should want to immediately
+re-read the chapter. Pacing: deliberate. Scene length: longer. Tension: slow build to spike.""",
 
-    "subtext": """Write in a subtext-heavy style. What characters don't say matters more than
-what they do. Understatement. Implication over declaration. Reveal character through action
-and dialogue, not introspection. Minimal filtering ("he felt", "she realized"). Let the reader
-infer. Tension through what's withheld.""",
+    "sensory_immersion": """RHETORICAL STRATEGY: SENSORY-IMMERSION
+Structure this chapter around the physical experience of being in this world.
+Lead with sensory detail — what the POV character sees, hears, smells, tastes, feels.
+Minimal interior monologue. Let the world and action convey meaning through physical sensation.
+Dialogue is spare and grounded in physical action. Think cinematic — every paragraph could be
+a shot. Pacing: variable, driven by sensory density. Scene length: varied. Tension: ambient.""",
+
+    "interiority_forward": """RHETORICAL STRATEGY: INTERIORITY-FORWARD
+Structure this chapter around the POV character's internal experience.
+Free indirect discourse. The narrative voice merges with the character's thoughts.
+Prioritize emotional truth over plot progression. Filter events through how the character
+experiences, interprets, and is changed by them. Use recollection, anticipation, and
+emotional resonance. Dialogue reveals inner conflict more than plot information.
+Pacing: reflective. Scene length: longer. Tension: emotional.""",
 }
 
-DEFAULT_STYLE_PROFILES = ["lyrical", "compressed", "subtext"]
+DEFAULT_STYLE_PROFILES = ["suspense_first", "reveal_late", "sensory_immersion", "interiority_forward"]
 
 DRAFT_SYSTEM_PROMPT = """You are an award-winning novelist writing a chapter of a book.
 Write literary-quality prose that:
@@ -75,8 +95,12 @@ Character arc beat: {character_arc_beat}
 
 World context / setting: {world_context}
 
+{hindsight_canonical_state}
+
 Relevant context from earlier chapters (retrieved by relevance):
 {retrieved_context}
+
+{compressed_narrative_context}
 
 Active threads to manage:
 {active_threads}
@@ -309,6 +333,8 @@ def _draft_single_variant(
     config: Config,
     scorer: ChapterScorer,
     chapter_spec: dict,
+    hindsight_context: str = "",
+    compressed_context: str = "",
 ) -> dict:
     """Draft a single variant of a chapter and score it."""
     prompt = CHAPTER_DRAFT_TEMPLATE.format(
@@ -321,7 +347,9 @@ def _draft_single_variant(
         foreshadowing=foreshadowing or "As outlined above.",
         character_arc_beat=char_arc_beat or "As outlined above.",
         world_context=world_context or "As established in world bible.",
+        hindsight_canonical_state=hindsight_context or "[No additional canonical state available]",
         retrieved_context=retrieved_context,
+        compressed_narrative_context=compressed_context or "[No compressed context available]",
         active_threads="\n".join(active_threads[-5:]) if active_threads else "None yet.",
         style_direction=style_direction,
     )
@@ -528,6 +556,17 @@ def run_draft(
     active_threads = []
     written_chapter_meta = []
 
+    # Initialize Hindsight canonical state store
+    project_slug = os.path.basename(project_dir)
+    hindsight = HindsightStore(project_id=project_slug)
+    hindsight.ensure_bank_safe()
+
+    # Initialize ReIO compression
+    reio = ReIOCompressor(
+        token_budget=config.chapter.auto_compress_at_tokens,
+        recent_chapters=config.chapter.context_carry_window,
+    )
+
     # Token tracking
     total_input_tokens = 0
     total_output_tokens = 0
@@ -583,6 +622,21 @@ def run_draft(
             mood = world.get("mood_setting", "")
             world_context = f"{wc[:200]}\n{mood[:200]}"
 
+        # --- Hindsight canonical state ---
+        hindsight_context = hindsight.format_context_for_drafting(chapter_num, summary)
+
+        # --- ReIO compressed narrative context ---
+        compressed_context = ""
+        if written_chapter_meta:
+            compressed_context = reio.compress_for_chapter(
+                chapter_num=chapter_num,
+                total_chapters=len(written_chapter_meta),
+                chapter_summaries=written_chapter_meta,
+                arc_summaries=reio.build_arc_summaries(outline, written_chapter_meta)
+                if written_chapter_meta else None,
+                critical_state=hindsight_context if hindsight.enabled else None,
+            )
+
         print(f"  Drafting Chapter {chapter_num}/{total}: {chapter_title}...")
         print(f"    POV: {pov} | Model: {model.name}")
 
@@ -613,6 +667,8 @@ def run_draft(
                     config=config,
                     scorer=scorer,
                     chapter_spec=chapter_spec,
+                    hindsight_context=hindsight_context,
+                    compressed_context=compressed_context,
                 )
                 # Estimate tokens
                 total_input_tokens += _estimate_tokens(
@@ -727,6 +783,18 @@ def run_draft(
         }
         results.append(chapter_result)
         written_chapter_meta.append(chapter_result)
+
+        # Update Hindsight canonical state
+        hindsight.update_after_chapter(
+            chapter_num=chapter_num,
+            title=chapter_title,
+            summary=summary,
+            pov=pov,
+            word_count=best_score["word_count"],
+            key_events=key_events if isinstance(key_events, list) else [key_events],
+            foreshadowing_elements=[(foreshadowing, chapter_num + 3)]
+            if foreshadowing else None,
+        )
 
         # Update context
         previous_summary = f"Chapter {chapter_num}: {summary[:200]}"

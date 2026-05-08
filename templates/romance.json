@@ -1,0 +1,71 @@
+{
+  "genre": "romance",
+  "description": "Emotional romance with meet-cute, obstacles, and emotional beats",
+  "beats": [
+    {
+      "phase": "meet_cute",
+      "chapter_range": [1, 3],
+      "required_elements": [
+        "initial_meeting",
+        "spark_or_tension",
+        "opposing_life_contexts"
+      ],
+      "description": "The protagonists meet, sparks fly (or clash), their opposing worlds are established"
+    },
+    {
+      "phase": "building_connection",
+      "chapter_range": [4, 8],
+      "required_elements": [
+        "forced_proximity",
+        "vulnerability_moment",
+        "friend_support",
+        "growing_attraction"
+      ],
+      "description": "Circumstances throw them together, they share a vulnerable moment"
+    },
+    {
+      "phase": "first_obstacle",
+      "chapter_range": [9, 12],
+      "required_elements": [
+        "external_barrier",
+        "misunderstanding_or_secret",
+        "temporary_separation"
+      ],
+      "description": "The first major obstacle emerges, forcing distance"
+    },
+    {
+      "phase": "reconciliation",
+      "chapter_range": [13, 16],
+      "required_elements": [
+        "truth_emerges",
+        "grand_gesture",
+        "overcoming_obstacle"
+      ],
+      "description": "The truth comes out, a grand gesture bridges the gap"
+    },
+    {
+      "phase": "resolution",
+      "chapter_range": [17, 20],
+      "required_elements": [
+        "final_barrier",
+        "climactic_choice",
+        "happy_or_bittersweet_ending"
+      ],
+      "description": "The final barrier is overcome with a climactic choice"
+    }
+  ],
+  "tracking": {
+    "critical_items": ["emotional_distance", "trust_level", "external_obstacles", "subplot_romance"],
+    "must_track": [
+      "emotional distance per chapter (1-10)",
+      "trust level escalation",
+      "external obstacle count",
+      "supporting character relationship progress"
+    ]
+  },
+  "structure": {
+    "recommended_chapters": 20,
+    "tension_arc": "will_they_wont_they",
+    "pacing_profile": "emotional_wave"
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "genre": "fantasy",
+  "description": "Epic fantasy with worldbuilding, quest structure, and magic system integration",
+  "beats": [
+    {
+      "phase": "ordinary_world",
+      "chapter_range": [1, 3],
+      "required_elements": [
+        "protagonist_ordinary_life",
+        "world_hints",
+        "inciting_departure"
+      ],
+      "description": "Establish the ordinary world, hint at the magical one, inciting call to adventure"
+    },
+    {
+      "phase": "crossing_threshold",
+      "chapter_range": [4, 8],
+      "required_elements": [
+        "threshold_crossing",
+        "ally_introduction",
+        "magic_system_introduction",
+        "antagonist_whisper"
+      ],
+      "description": "Protagonist enters the fantasy world, learns magic basics, meets allies"
+    },
+    {
+      "phase": "trials_and_allies",
+      "chapter_range": [9, 14],
+      "required_elements": [
+        "series_of_trials",
+        "magic_deepening",
+        "antagonist_face",
+        "companion_bonding"
+      ],
+      "description": "Trials test the party, magic deepens, antagonist becomes personal"
+    },
+    {
+      "phase": "darkest_hour",
+      "chapter_range": [15, 18],
+      "required_elements": [
+        "major_defeat",
+        "loss_of_hope",
+        "mentor_sacrifice_or_secret"
+      ],
+      "description": "The fellowship breaks or suffers a devastating loss"
+    },
+    {
+      "phase": "final_quest",
+      "chapter_range": [19, 24],
+      "required_elements": [
+        "rally",
+        "magic_mastery",
+        "final_battle",
+        "cost_of_victory"
+      ],
+      "description": "The final confrontation with a meaningful cost"
+    }
+  ],
+  "tracking": {
+    "critical_items": ["magic_system_rules", "world_lore_reveals", "artifact_tracking", "prophecy_elements"],
+    "must_track": [
+      "magic system rules established per chapter",
+      "worldbuilding reveals",
+      "artifact locations",
+      "prophecy fulfillment progress"
+    ]
+  },
+  "structure": {
+    "recommended_chapters": 24,
+    "tension_arc": "heros_journey",
+    "pacing_profile": "epic_rhythm"
+  }
+}

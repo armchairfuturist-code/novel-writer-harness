@@ -1,0 +1,74 @@
+{
+  "genre": "mystery",
+  "description": "Detective/crime mystery with clue management and red herrings",
+  "beats": [
+    {
+      "phase": "setup",
+      "chapter_range": [1, 3],
+      "required_elements": [
+        "inciting_crime",
+        "detective_introduction",
+        "initial_clues",
+        "suspect_introductions"
+      ],
+      "description": "Establish the crime, introduce the detective, plant first clues"
+    },
+    {
+      "phase": "investigation",
+      "chapter_range": [4, 8],
+      "required_elements": [
+        "red_herrings",
+        "false_leads",
+        "witness_interviews",
+        "escalating_stakes",
+        "subplot_investigation"
+      ],
+      "description": "Investigation deepens, red herrings appear, stakes rise"
+    },
+    {
+      "phase": "middle_twist",
+      "chapter_range": [9, 12],
+      "required_elements": [
+        "major_revelation",
+        "case_reshuffle",
+        "detective_personal_connection"
+      ],
+      "description": "A twist recontextualizes everything the detective thought they knew"
+    },
+    {
+      "phase": "pressure",
+      "chapter_range": [13, 16],
+      "required_elements": [
+        "time_pressure",
+        "threat_to_detective",
+        "misleading_final_lead"
+      ],
+      "description": "External pressure mounts, a false final lead is pursued"
+    },
+    {
+      "phase": "resolution",
+      "chapter_range": [17, 20],
+      "required_elements": [
+        "final_deduction",
+        "showdown",
+        "motive_reveal",
+        "moral_complexity"
+      ],
+      "description": "All clues converge, the detective solves the case, moral ambiguity lingers"
+    }
+  ],
+  "tracking": {
+    "critical_items": ["clues", "suspects", "motives", "timeline", "alibis"],
+    "must_track": [
+      "each clue's discovery chapter",
+      "each suspect's first appearance",
+      "red herring identification",
+      "alibi verification status"
+    ]
+  },
+  "structure": {
+    "recommended_chapters": 20,
+    "tension_arc": "crescendo",
+    "pacing_profile": "slow_burn_with_spikes"
+  }
+}

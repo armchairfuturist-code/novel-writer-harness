@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""StoryForge — autonomous novel-writing pipeline v0.2.
+"""StoryForge — autonomous novel-writing pipeline v0.3.
 
 Usage:
     python storyforge.py "seed concept"
+    python storyforge.py "seed concept" --genre mystery
     python storyforge.py "seed concept" --resume 7
     python storyforge.py "same concept"           # auto-resumes existing project
     python storyforge.py --benchmark
 
 Pipeline:
-    seed -> worldbuilding -> characters -> outline -> draft (revise, variants, RAG)
-    -> fact-check -> backprop -> adversarial edit -> review (dual-persona) -> export
+    seed -> worldbuilding -> characters -> outline -> draft (revise, rhetorical variants,
+    RAG, Hindsight canonical state, ReIO compression) -> fact-check ->
+    iterative backprop -> adversarial edit -> review (dual-persona) -> export
 
-New in v0.2:
-    - Revision loop: chapters scoring < 6.0 auto-revise up to 3 rounds
-    - Parallel variants: 2-3 style profiles per chapter, best wins
-    - RAG context retrieval: BM25-based semantic chapter context
-    - Backward propagation: detect forward contradictions
-    - Adversarial editing: cut 15% weakest prose (LLM + mechanical)
-    - Dual-persona review: literary critic + professor of fiction
-    - Token tracking: per-run cost estimation
+New in v0.3:
+    - Hindsight canonical state store (structured memory across chapters)
+    - Postwriter-inspired rhetorical strategies (4 distinct narrative approaches)
+    - ReIO context compression (StoryWriter-inspired, solves auto_compress_at_tokens)
+    - Iterative backward propagation (loops until convergence)
+    - Genre-specific beat templates (mystery, thriller, romance, fantasy, sci-fi)
 """
 
 import argparse
@@ -40,14 +40,15 @@ from pipeline.draft import run_draft
 from pipeline.review import run_full_review
 from pipeline.factcheck import run_fact_check
 from pipeline.backprop import run_backward_propagation
+from pipeline.iterative_backprop import run_iterative_backpropagation
 from pipeline.adversarial_edit import run_adversarial_edit
 from pipeline.export import export_manuscript
 
 BANNER = """
-  +====================================================+
-  |            StoryForge v0.2                          |
-  |  Novel pipeline with revision loop + dual review    |
-  +====================================================+
+  +=========================================================+
+  |            StoryForge v0.3                               |
+  |  Hindsight + Rhetorical Strategies + ReIO + Backprop     |
+  +=========================================================+
 """
 
 PHASES = ["seed", "worldbuilding", "characters", "outline", "draft", "review", "export"]
@@ -93,6 +94,10 @@ def run_full_pipeline(
     dual_review: bool = True,
     enable_backprop: bool = True,
     enable_adversarial: bool = True,
+    iterative_backprop: bool = True,
+    genre: Optional[str] = None,
+    enable_hindsight: bool = True,
+    enable_reio: bool = True,
 ) -> str:
     """Run the full StoryForge pipeline from seed to export.
 
@@ -101,10 +106,14 @@ def run_full_pipeline(
         config: Optional Config override
         resume_from: Chapter number to start drafting from
         quick: If True, skip review, backprop, and adversarial phases
-        parallel_variants: Draft multiple style variants per chapter
+        parallel_variants: Draft multiple rhetorical variants per chapter
         dual_review: Use dual-persona review (higher quality)
         enable_backprop: Run backward propagation scan
         enable_adversarial: Run adversarial editing pass
+        iterative_backprop: Use iterative backprop loop (convergence-based)
+        genre: Genre template to use (mystery, thriller, romance, fantasy, sci-fi)
+        enable_hindsight: Enable Hindsight canonical state store
+        enable_reio: Enable ReIO context compression
 
     Returns:
         str: Path to the project output directory
@@ -112,7 +121,10 @@ def run_full_pipeline(
     config = config or Config()
     pipeline_start = time.time()
     print(BANNER)
-    print(f"Seed concept: {concept}\n")
+    print(f"Seed concept: {concept}")
+    if genre:
+        print(f"Genre template: {genre}")
+    print()
 
     # Determine project directory
     project_slug = slugify(concept)[:40]
@@ -152,11 +164,34 @@ def run_full_pipeline(
             spec = json.load(f)
         print(f"  Title: {spec.get('title', 'Untitled')}\n")
 
+    # Apply genre template if specified
+    if genre and "genre_template" not in completed:
+        from templates import get_template, list_templates
+        template = get_template(genre)
+        if template:
+            print(f"=== Genre Template: {genre.title()} ===")
+            print(f"  Structure: {template.get('structure', {}).get('tension_arc', 'standard')}")
+            print(f"  Recommended chapters: {template.get('structure', {}).get('recommended_chapters', 'auto')}")
+            if spec:
+                spec["genre_template"] = genre
+                spec["genre_beats"] = template.get("beats", [])
+                spec["tracking_items"] = template.get("tracking", {}).get("must_track", [])
+                with open(os.path.join(project_dir, "spec.json"), "w", encoding="utf-8") as f:
+                    json.dump(spec, f, indent=2)
+            print(f"  Template loaded.\n")
+        completed.add("genre_template")
+        _save_checkpoint(project_dir, completed)
+
     # ── Phase 2: Worldbuilding ──
     if "worldbuilding" not in completed:
         print("=== Phase 2/7: Worldbuilding ===")
         start = time.time()
-        world = run_worldbuilding(spec)
+        # Inject genre into worldbuilding context
+        if genre:
+            concept_enhanced = f"{concept} (Genre: {genre})"
+            world = run_worldbuilding(spec)
+        else:
+            world = run_worldbuilding(spec)
         elapsed = time.time() - start
         print(f"  World: {world.get('world_name', 'Generated World')}")
         print(f"  Time: {elapsed:.1f}s\n")
@@ -193,7 +228,24 @@ def run_full_pipeline(
     if "outline" not in completed:
         print("=== Phase 4/7: Outline ===")
         start = time.time()
+        # Apply genre beat template to outline
         outline = run_outline(spec, world, characters)
+        if genre:
+            from templates import get_template
+            template = get_template(genre)
+            if template:
+                beats = template.get("beats", [])
+                # Tag chapters with their genre beat phase
+                for act in outline.get("acts", []):
+                    for ch in act.get("chapters", []):
+                        ch_num = ch.get("chapter", 0)
+                        for beat in beats:
+                            cr = beat.get("chapter_range", [0, 0])
+                            if cr[0] <= ch_num <= cr[1]:
+                                ch["genre_phase"] = beat.get("phase", "")
+                                ch["required_elements"] = beat.get("required_elements", [])
+                                break
+                outline["genre_template"] = genre
         elapsed = time.time() - start
         act_count = len(outline.get("acts", []))
         ch_count = sum(len(a.get("chapters", [])) for a in outline.get("acts", []))
@@ -217,8 +269,10 @@ def run_full_pipeline(
         print("=== Phase 5/7: Drafting ===")
         print(f"  Model: {config.model_for_phase('draft').name}")
         print(f"  Target: {chapter_count} chapters")
-        print(f"  Parallel variants: {parallel_variants}")
+        print(f"  Parallel rhetorical variants: {parallel_variants}")
         print(f"  Revision loop: ENABLED (threshold: {config.scoring.min_chapter_score})")
+        print(f"  Hindsight canonical state: {'ON' if enable_hindsight else 'OFF'}")
+        print(f"  ReIO compression: {'ON' if enable_reio else 'OFF'}")
         print()
         start = time.time()
         chapters = run_draft(
@@ -267,19 +321,36 @@ def run_full_pipeline(
                 print(f"    ... and {len(fc_report['issues']) - 5} more")
             print()
 
-    # ── Backward Propagation (new in v0.2) ──
+    # ── Backward Propagation (iterative in v0.3) ──
     if "backprop" not in completed and not quick and enable_backprop:
         print("=== Backward Propagation: Forward Contradictions ===")
         start = time.time()
-        bp_report = run_backward_propagation(project_dir)
+
+        if iterative_backprop:
+            print(f"  Mode: ITERATIVE (up to {config.scoring.max_full_review_rounds} iterations)")
+            bp_report = run_iterative_backpropagation(
+                project_dir,
+                max_iterations=config.scoring.max_full_review_rounds,
+            )
+        else:
+            print("  Mode: ONE-SHOT")
+            bp_report = run_backward_propagation(project_dir)
+
         elapsed = time.time() - start
         print(f"  Status: {bp_report['status']}")
         print(f"  {bp_report['summary']}")
-        for issue in bp_report.get("issues", [])[:5]:
+
+        if iterative_backprop:
+            for it in bp_report.get("iteration_history", []):
+                it_num = it["iteration"]
+                issues = it["total_issues"]
+                print(f"    Iter {it_num}: {issues} issues")
+
+        for issue in bp_report.get("final_issues", [])[:5]:
             tag = {"FAIL": "!", "WARN": "?", "INFO": "i"}.get(issue.get("severity", "INFO"), "?")
             print(f"    [{tag}] Ch {issue.get('target_chapter', '?'):>2}: {issue['detail'][:100]}")
-        if len(bp_report.get("issues", [])) > 5:
-            print(f"    ... and {len(bp_report['issues']) - 5} more")
+        if len(bp_report.get("final_issues", [])) > 5:
+            print(f"    ... and {len(bp_report['final_issues']) - 5} more")
         print(f"  Time: {elapsed:.1f}s\n")
         completed.add("backprop")
         _save_checkpoint(project_dir, completed)
@@ -288,7 +359,7 @@ def run_full_pipeline(
     else:
         print("=== Backward Propagation === [cached]\n")
 
-    # ── Adversarial Editing (new in v0.2) ──
+    # ── Adversarial Editing ──
     if "adversarial" not in completed and not quick and enable_adversarial:
         print("=== Adversarial Editing: Tightening Prose ===")
         start = time.time()
@@ -361,7 +432,7 @@ def run_full_pipeline(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="StoryForge v0.2 - autonomous novel-writing pipeline with revision loop"
+        description="StoryForge v0.3 - autonomous novel-writing pipeline with Hindsight, rhetorical strategies, ReIO, iterative backprop"
     )
     parser.add_argument(
         "concept",
@@ -392,7 +463,7 @@ def main():
     parser.add_argument(
         "--single-variant",
         action="store_true",
-        help="Disable parallel variants (draft 1 version per chapter, cheaper)",
+        help="Disable parallel rhetorical variants (draft 1 version per chapter, cheaper)",
     )
     parser.add_argument(
         "--single-review",
@@ -408,6 +479,26 @@ def main():
         "--no-adversarial",
         action="store_true",
         help="Skip adversarial editing pass",
+    )
+    parser.add_argument(
+        "--genre",
+        choices=["mystery", "thriller", "romance", "fantasy", "sci-fi"],
+        help="Genre template with structured beats and tracking (NOTE: only --genre is supported, not positional)",
+    )
+    parser.add_argument(
+        "--no-iterative-backprop",
+        action="store_true",
+        help="Use one-shot backprop instead of iterative (default: iterative)",
+    )
+    parser.add_argument(
+        "--no-hindsight",
+        action="store_true",
+        help="Disable Hindsight canonical state store",
+    )
+    parser.add_argument(
+        "--no-reio",
+        action="store_true",
+        help="Disable ReIO context compression",
     )
 
     args = parser.parse_args()
@@ -435,6 +526,10 @@ def main():
         dual_review=not args.single_review,
         enable_backprop=not args.no_backprop,
         enable_adversarial=not args.no_adversarial,
+        iterative_backprop=not args.no_iterative_backprop,
+        genre=args.genre,
+        enable_hindsight=not args.no_hindsight,
+        enable_reio=not args.no_reio,
     )
 
 
