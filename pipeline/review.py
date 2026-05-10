@@ -51,7 +51,7 @@ Return JSON with:
 - "character_authenticity": 0-10 (depth, motivation, consistency)
 - "tension_management": 0-10 (stakes, momentum, reader engagement)
 - "overall_score": 0-10
-- "specific_failures": [{"quote": "exact sentence", "failure": "what's wrong", "fix": "how to fix"}]
+- "specific_failures": [{{"quote": "exact sentence", "failure": "what's wrong", "fix": "how to fix"}}]
 - "strengths": ["specific things that work"]
 - "fundamental_issues": ["high-level problems this chapter has"]"""
 
@@ -65,7 +65,7 @@ Return JSON with:
 - "reader_experience": 0-10 (emotional impact, immersion, satisfaction)
 - "voice_consistency": 0-10 (POV discipline, narrative voice, dialogue differentiation)
 - "overall_score": 0-10
-- "craft_observations": [{"element": "what you observed", "assessment": "how it works or doesn't", "alternative": "a concrete alternative approach"}]
+- "craft_observations": [{{"element": "what you observed", "assessment": "how it works or doesn't", "alternative": "a concrete alternative approach"}}]
 - "what_to_preserve": ["things the literary critic might miss that ARE working"]
 - "growth_areas": ["the 2-3 things this writer should focus on most"]"""
 
@@ -85,7 +85,7 @@ SYNTHESIS_PROMPT = """Synthesize these two reviews of "{chapter_title}" into a u
 
 Return JSON with:
 - "unified_score": 0-10
-- "critical_issues": [{"issue": "desc", "priority": "high/medium/low", "target": "which sentences/sections"}]
+- "critical_issues": [{{"issue": "desc", "priority": "high/medium/low", "target": "which sentences/sections"}}]
 - "revision_instructions": ["Step-by-step what to fix, in priority order"]
 - "preserve": ["What's working - don't change this"]
 - "synthesis_notes": "What the two reviewers agreed on, what they disagreed on"

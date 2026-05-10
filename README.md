@@ -58,11 +58,11 @@ Give it a seed concept and it will:
 
 ## v0.3: What's New
 
-### GBrain canonical state store
+### Hindsight canonical state store
 
 A structured memory system that tracks character traits, world facts, plot threads, and foreshadowing debts chapter by chapter. Before writing each chapter, the pipeline queries what it already knows. After writing, it pushes new state back. This prevents characters from changing eye color between chapters and plot threads from disappearing into the void.
 
-Think of it as a story bible that writes itself as the novel progresses. No configuration needed -- it connects to GBrain at localhost:8888 and creates a project-specific bank automatically.
+Think of it as a story bible that writes itself as the novel progresses. No configuration needed -- it connects to Hindsight at localhost:8888 and creates a project-specific bank automatically.
 
 ### 4 rhetorical strategies (Postwriter-inspired)
 
@@ -125,7 +125,7 @@ For reference, the earlier release:
 | **Adversarial editing** | Two passes: an LLM identifies 15% cuts classified by type (filler, redundancies, weak verbs, purple prose), then a mechanical pass tightens the remaining text. |
 | **Dual-persona review** | Literary Critic + Professor of Fiction each score and critique the full manuscript, then debate their findings to produce a consolidated revision roadmap. |
 | **Token tracking** | Cost estimates tracked per chapter and phase. |
-| **86 unit tests** | Covers every module: scoring, BM25 retrieval, revision prompt generation, backpropagation, adversarial editing, config, timeline regression, plot thread detection, foreshadowing, GBrain client, ReIO compression, iterative backprop, genre templates, rhetorical strategies, and more. |
+| **86 unit tests** | Covers every module: scoring, BM25 retrieval, revision prompt generation, backpropagation, adversarial editing, config, timeline regression, plot thread detection, foreshadowing, hindsight client, ReIO compression, iterative backprop, genre templates, rhetorical strategies, and more. |
 
 ---
 
@@ -141,7 +141,7 @@ For reference, the earlier release:
 | Backward propagation | Built-in (no API call) | Pattern matching -- detects contradictions without LLM |
 | Adversarial editing | Kimi K2.6 Precision | Identifies and classifies cuts per chapter |
 | Literary critique | Kimi K2.6 | Dual-persona review (Critic + Professor) |
-| GBrain state | Built-in (no API call) | Structured memory queries -- no LLM tokens |
+| Hindsight state | Built-in (no API call) | Structured memory queries -- no LLM tokens |
 
 Configured for the crofai API (ai.nahcrof.com/v1). Change any model in `config.py`.
 
@@ -160,7 +160,7 @@ Configured for the crofai API (ai.nahcrof.com/v1). Change any model in `config.p
 | `python storyforge.py --no-backprop "concept"` | Skip backward propagation scan |
 | `python storyforge.py --no-adversarial "concept"` | Skip adversarial editing pass |
 | `python storyforge.py --no-iterative-backprop "concept"` | Use one-shot backprop instead of iterative |
-| `python storyforge.py --no-gbrain "concept"` | Disable GBrain canonical state store |
+| `python storyforge.py --no-hindsight "concept"` | Disable canonical state store |
 | `python storyforge.py --no-reio "concept"` | Disable ReIO context compression |
 | `python storyforge.py --benchmark` | Benchmark model variants on prose quality |
 | `python storyforge.py --project-dir /path "concept"` | Override output directory |
@@ -244,9 +244,9 @@ The iterative version runs up to 3 passes. If round 1 finds issues and generates
 
 ---
 
-## How GBrain canonical state works
+## How Hindsight canonical state works
 
-The GBrainStore connects to a structured memory server at localhost:8888. It creates a project-specific bank (e.g., `storyforge-the-great-novel`) and:
+The HindsightStore connects to a structured memory server at localhost:8888. It creates a project-specific bank (e.g., `storyforge-the-great-novel`) and:
 
 1. **Before each chapter draft**: queries for character traits, world facts, active plot threads, and foreshadowing elements relevant to the current chapter
 2. **Formats results** into a prompt section the model can use during drafting
@@ -293,7 +293,7 @@ pip install pytest
 pytest tests/ -v
 ```
 
-86 tests covering: scoring mechanics, BM25 retrieval, revision prompt generation, backpropagation (character traits, timeline, plot threads, foreshadowing), adversarial editing (mechanical tighten, cut categories, cut patterns), GBrain client (HTTP mocking, bank management, recall, contradiction scanning), ReIO compression (compression tiers, arc summaries, empty state, token estimation), iterative backprop (convergence, iteration tracking, skipped state), genre templates (all 5 genres, beat lookup, required elements, tracking items, critical items), and rhetorical strategies (4 profiles with labeled strategies and pacing directives).
+86 tests covering: scoring mechanics, BM25 retrieval, revision prompt generation, backpropagation (character traits, timeline, plot threads, foreshadowing), adversarial editing (mechanical tighten, cut categories, cut patterns), hindsight client (HTTP mocking, bank management, recall, contradiction scanning), ReIO compression (compression tiers, arc summaries, empty state, token estimation), iterative backprop (convergence, iteration tracking, skipped state), genre templates (all 5 genres, beat lookup, required elements, tracking items, critical items), and rhetorical strategies (4 profiles with labeled strategies and pacing directives).
 
 ---
 
@@ -312,7 +312,7 @@ Everything in `config.py`. You can change:
 - Output directory
 - API endpoint (point at any OpenAI-compatible API)
 - Token cost estimates per input/output token
-- GBrain host and port
+- Hindsight host and port
 - ReIO compression budget and fidelity tiers
 
 ---
@@ -336,7 +336,7 @@ Default: Three-Act. Change in `pipeline/outline.py` or pass a structure key.
 - **Postwriter** (avigold) -- Rhetorical strategies, structured state, backward propagation design
 - **autonovel** (NousResearch) -- Pipeline architecture, dual immune system, Opus dual-persona review
 - **StoryWriter** (arxiv 2506.16445) -- ReIO compression, multi-agent drafting
-- **GBrain** (NousResearch fork) -- Structured memory server, bank-based canonical state
+- **Hindsight** (NousResearch) -- Structured memory server, bank-based canonical state
 - **AI_NovelGenerator** (YILING0013) -- State tracking, foreshadowing management
 - **gemini-writer** (Doriandarko) -- 1M context auto-compression, recovery mode
 - **storycraftr** (raestrada) -- Provider-agnostic config, embeddings context
