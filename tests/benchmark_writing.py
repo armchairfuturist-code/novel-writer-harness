@@ -179,8 +179,8 @@ def run_benchmark():
 
     variants = list(config.benchmark_models.keys())
     variant_labels = {
-        "kimi-k2.6-speed": "Kimi K2.6 Speed",
-        "kimi-k2.6-test": "Kimi K2.6 Balanced (test)",
+        "kimi-k2.6-speed": "Kimi K2.6 Base",
+        "kimi-k2.6-balanced": "Kimi K2.6 Balanced",
         "kimi-k2.6-precision": "Kimi K2.6 Precision",
     }
 

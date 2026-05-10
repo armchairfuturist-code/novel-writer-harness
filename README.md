@@ -1,83 +1,149 @@
 # Novel Writer Harness
 
-**Write a complete novel by typing one sentence.** The Novel Writer Harness is an AI-powered tool that takes a story concept and autonomously generates a full novel - from worldbuilding and characters through to a complete manuscript.
+**Write a complete novel by typing one sentence.** The Novel Writer Harness takes a story concept and autonomously generates a full novel -- from worldbuilding and characters through to a complete manuscript. It routes different writing tasks to the AI models best suited for each job.
 
-It's a mashup of the best ideas from 9 open-source AI writing projects (autonovel, AI_NovelGenerator, gemini-writer, storycraftr, and others), tuned to use different AI models for the tasks they're best at.
-
----
-
-## What it does
-
-Give it a seed concept like:
-
-> "A detective in a city where memories are currency solves a murder by accessing the victim's final memories, only to discover the killer is someone who erased themselves from everyone's mind."
-
-And it will:
-
-1. **Analyze** your concept into a structured project plan (genre, tone, POV, chapter count)
-2. **Build a world** - geography, history, factions, magic/tech systems
-3. **Create characters** - 6-7 characters with motivations, flaws, secrets, and growth arcs
-4. **Outline the plot** - chapter-by-chapter with key events, emotional arcs, and foreshadowing
-5. **Write each chapter** - 3000-5000 words per chapter, with context carry from previous chapters
-6. **Score and review** - mechanical quality checks (banned words, show-don't-tell) + AI literary critique
-7. **Export** - full manuscript as markdown, plus PDF/epub if you have Pandoc installed
-
----
-
-## How it uses different AI models
-
-Different AI models have different strengths. This tool routes each task to the best model:
-
-| Phase | Model | Why |
-|---|---|---|
-| Planning (world, outline) | DeepSeek V4 Pro | Large context window for expansive worldbuilding |
-| Character creation | Kimi K2.6 | Prose-optimized, writes nuanced character profiles |
-| Chapter writing | Kimi K2.6 Precision | Best writing quality for long-form fiction |
-| Mechanical scoring | Gemini 2.5 Flash | Cheap and fast regex checks |
-| Literary critique | Kimi K2.6 | Judges prose quality like a fiction professor |
-
-The tool is configured for the **crofai API** (beta.crof.ai/v1) but you can change any model in `config.py`.
+A mashup of ideas from 11+ open-source AI writing projects (Postwriter, autonovel, StoryWriter, Novel OS, and others) combined into a single pipeline that iteratively improves quality as it writes.
 
 ---
 
 ## Quick Start
 
-### 1. Requirements
+### Requirements
 
-- Python 3.10+
-- An API key for crofai (set as `CROFAI_API_KEY` environment variable)
+- Python 3.11+
+- An API key from crofai (set as `CROFAI_API_KEY` environment variable)
 - `pip install httpx` (the only dependency)
 - Optional: `pandoc` + LaTeX for PDF/epub export
 
-### 2. Install
+### Install
 
 ```bash
-# Install the only dependency
 pip install httpx
-
-# Set your API key
-export CROFAI_API_KEY="your-api-key-here"    # Mac/Linux
-set CROFAI_API_KEY=your-api-key-here         # Windows CMD
-$env:CROFAI_API_KEY="your-api-key-here"      # Windows PowerShell
+export CROFAI_API_KEY="your-api-key-here"
 ```
 
-### 3. Write a novel
+### Write a novel
 
 ```bash
-python storyforge.py "A detective in a city where memories are currency..."
+python storyforge.py "A detective in a city where memories are currency solves a murder by accessing the victim's final memories, only to discover the killer is someone who erased themselves from everyone's mind."
 ```
 
-That's it. The pipeline runs through all 6 phases and outputs to `~/storyforge-projects/{novel-title}/`.
+That's it. Output lands at `~/storyforge-projects/{novel-title}/`. The pipeline takes anywhere from 15 minutes to a few hours depending on the model speed and chapter count.
 
-### 4. Benchmark the writing models (optional)
-
-If you want to find out which Kimi K2.6 variant writes the best prose:
+### Pick a genre (optional)
 
 ```bash
-python storyforge.py --benchmark
+python storyforge.py "your concept" --genre mystery
 ```
 
-This tests all 3 variants (speed, balanced, precision) on 5 creative writing prompts, compares them head-to-head, and tells you which one writes best.
+Available genres: `mystery`, `thriller`, `romance`, `fantasy`, `sci-fi`. Each one comes with structured beat templates, required elements per chapter range, and tracking items that keep the pipeline honest about what it needs to manage.
+
+---
+
+## What it does
+
+Give it a seed concept and it will:
+
+1. **Analyze** your concept into a structured project plan (title, genre, tone, POV, chapter count)
+2. **Build a world** -- geography, history, factions, magic/tech systems
+3. **Create characters** -- 6-7 characters with motivations, flaws, secrets, and growth arcs
+4. **Outline the plot** -- chapter-by-chapter with key events, emotional arcs, and foreshadowing
+5. **Draft each chapter** -- with 4 rhetorical strategies, a revision loop, and persistent state tracking
+6. **Backward propagate** -- scans every chapter for contradictions, drift, and unresolved threads; iterates until clean
+7. **Adversarially edit** -- cuts weak spots and tightens prose mechanically
+8. **Review** -- two LLM critics (Literary Critic + Professor of Fiction) score, critique, and debate each other
+9. **Export** -- full manuscript as markdown, plus PDF/epub if Pandoc is installed
+
+---
+
+## v0.3: What's New
+
+### GBrain canonical state store
+
+A structured memory system that tracks character traits, world facts, plot threads, and foreshadowing debts chapter by chapter. Before writing each chapter, the pipeline queries what it already knows. After writing, it pushes new state back. This prevents characters from changing eye color between chapters and plot threads from disappearing into the void.
+
+Think of it as a story bible that writes itself as the novel progresses. No configuration needed -- it connects to GBrain at localhost:8888 and creates a project-specific bank automatically.
+
+### 4 rhetorical strategies (Postwriter-inspired)
+
+Instead of just varying prose register (lyrical vs compressed), each chapter variant uses a distinct narrative approach:
+
+| Strategy | How it works | Best for |
+|---|---|---|
+| Suspense-First | Withhold and reveal. Hook-driven, tight pacing. | Thrillers, mysteries, page-turners |
+| Reveal-Late | Build context for 60-70%, then deliver a recontextualizing reveal | Literary fiction, emotional climaxes |
+| Sensory-Immersion | Lead with physical experience. Cinematic, spare dialogue. | World-heavy genres, action scenes |
+| Interiority-Forward | Free indirect discourse. Emotional truth over plot. | Character-driven drama |
+
+Each chapter drafts 2-3 variants (configurable), each using a different strategy. The system mechanically scores every variant and selects the best one. The model doesn't just write differently -- it thinks about the chapter from a fundamentally different narrative angle.
+
+### ReIO context compression (StoryWriter-inspired)
+
+As chapters accumulate, raw context windows become too large. This module dynamically compresses earlier story context into compact forms:
+
+- **Recent chapters** (last 3 by default): full summaries, high fidelity
+- **Middle chapters** (next 5): condensed one-liners
+- **Early chapters**: grouped into arc summaries
+- **Critical state**: always preserved (character traits, active threads)
+
+This solves a hard problem that was marked "NOT YET IMPLEMENTED" in the config. At chapter 20+, without compression, the model loses track of early story details. With ReIO, it maintains awareness of the full narrative arc at a fraction of the token cost.
+
+### Iterative backward propagation
+
+The old backpropagation ran once and generated a list of issues. The new version runs in a loop:
+
+```
+Scan chapters -> find contradictions -> generate revision instructions -> re-scan -> repeat
+```
+
+Up to 3 iterations by default. Detects when issues are the same as the previous round (stagnation) and stops early. Tracks convergence so you can see issue reduction per iteration. The status tells you whether it converged cleanly (PASS), has remaining WARN-level issues (STALLED), or has real errors that need manual attention (FAIL).
+
+### Genre-specific beat templates
+
+5 genre templates with structured beats mapped to chapter ranges:
+
+| Genre | Phases | Recommended chapters | Tracking |
+|---|---|---|---|
+| Mystery | setup, investigation, middle_twist, pressure, resolution | 20 | clues, suspects, motives, timeline, alibis |
+| Thriller | hook, escalation, midpoint_crisis, second_half_push, final_confrontation | 18 | tension_level, time_remaining, antagonist_moves |
+| Romance | meet_cute, building_connection, first_obstacle, reconciliation, resolution | 20 | emotional_distance, trust_level, obstacles |
+| Fantasy | ordinary_world, crossing_threshold, trials_and_allies, darkest_hour, final_quest | 24 | magic_system_rules, artifacts, prophecy |
+| Sci-Fi | status_quo_dystopia, the_question, deeper_in, moral_turning, resolution_or_rebellion | 22 | technology_rules, knowledge_gaps, conspiracy_layers |
+
+Each template defines required elements per phase (things that must appear in those chapters), tracking items (things the pipeline should watch across chapters), and structural metadata (tension arc, pacing profile). Select with `--genre mystery` on the command line.
+
+---
+
+### v0.2 Features
+
+For reference, the earlier release:
+
+| Feature | What it does |
+|---|---|
+| **Revision loop** | Chapters below 6.0/10 auto-revise up to 3 rounds. Each round identifies specific mechanical issues and sends targeted fix instructions to the LLM. Only accepts revisions that improve the score. No regressions allowed. |
+| **RAG context retrieval** | BM25 semantic search over past chapter summaries replaces the naive last-N window. Chapter 12 gets the 3 most relevant prior chapters, not just chapters 9-11. |
+| **Adversarial editing** | Two passes: an LLM identifies 15% cuts classified by type (filler, redundancies, weak verbs, purple prose), then a mechanical pass tightens the remaining text. |
+| **Dual-persona review** | Literary Critic + Professor of Fiction each score and critique the full manuscript, then debate their findings to produce a consolidated revision roadmap. |
+| **Token tracking** | Cost estimates tracked per chapter and phase. |
+| **86 unit tests** | Covers every module: scoring, BM25 retrieval, revision prompt generation, backpropagation, adversarial editing, config, timeline regression, plot thread detection, foreshadowing, GBrain client, ReIO compression, iterative backprop, genre templates, rhetorical strategies, and more. |
+
+---
+
+## How it uses different AI models
+
+| Phase | Model | Why |
+|---|---|---|
+| Planning (world, outline) | DeepSeek V4 Pro | Large context for expansive worldbuilding |
+| Character creation | Kimi K2.6 | Prose-optimized, nuanced character profiles |
+| Chapter drafting | Kimi K2.6 Precision | Best writing quality for long-form fiction |
+| Mechanical scoring | Built-in (no API call) | Regex-based -- instant, zero cost |
+| Revision (LLM pass) | Kimi K2.6 Precision | Fixes specific mechanical issues identified by scoring |
+| Backward propagation | Built-in (no API call) | Pattern matching -- detects contradictions without LLM |
+| Adversarial editing | Kimi K2.6 Precision | Identifies and classifies cuts per chapter |
+| Literary critique | Kimi K2.6 | Dual-persona review (Critic + Professor) |
+| GBrain state | Built-in (no API call) | Structured memory queries -- no LLM tokens |
+
+Configured for the crofai API (ai.nahcrof.com/v1). Change any model in `config.py`.
 
 ---
 
@@ -85,73 +151,173 @@ This tests all 3 variants (speed, balanced, precision) on 5 creative writing pro
 
 | Command | What it does |
 |---|---|
-| `python storyforge.py "concept"` | Full pipeline: seed analysis through export |
-| `python storyforge.py --quick "concept"` | Skip review phase, faster but no quality check |
-| `python storyforge.py --resume 7` | Resume drafting from chapter 7 (recovery mode) |
-| `python storyforge.py --benchmark` | Benchmark all 3 Kimi K2.6 variants on prose quality |
-| `python storyforge.py --project-dir /path/to/output` | Override the output directory location |
+| `python storyforge.py "concept"` | Full pipeline: seed through export |
+| `python storyforge.py "concept" --genre mystery` | Use mystery beat template |
+| `python storyforge.py --quick "concept"` | Skip review, backprop, and adversarial phases |
+| `python storyforge.py --resume 7 "concept"` | Resume drafting from chapter 7 |
+| `python storyforge.py --single-variant "concept"` | Draft 1 variant per chapter (cheaper) |
+| `python storyforge.py --single-review "concept"` | Use single LLM review instead of dual-persona |
+| `python storyforge.py --no-backprop "concept"` | Skip backward propagation scan |
+| `python storyforge.py --no-adversarial "concept"` | Skip adversarial editing pass |
+| `python storyforge.py --no-iterative-backprop "concept"` | Use one-shot backprop instead of iterative |
+| `python storyforge.py --no-gbrain "concept"` | Disable GBrain canonical state store |
+| `python storyforge.py --no-reio "concept"` | Disable ReIO context compression |
+| `python storyforge.py --benchmark` | Benchmark model variants on prose quality |
+| `python storyforge.py --project-dir /path "concept"` | Override output directory |
 | `python storyforge.py --help` | Show all options |
 
 ---
 
 ## Output Structure
 
-After the pipeline finishes, your novel lives here:
-
 ```
 ~/storyforge-projects/the-great-novel/
-+-- manuscript.md              # The whole thing, ready to read
-+-- project.json               # Metadata (title, genre, chapter count)
-+-- spec.json                  # Your seed concept analysis
-+-- world.json                 # The world bible
-+-- characters.json            # All character profiles
-+-- outline.json               # Chapter outlines with plot beats
-+-- chapters/
-|   +-- chapter-001.md         # Chapter 1
-|   +-- chapter-002.md         # Chapter 2
-|   +-- ...
-+-- manuscript.pdf             # Only if Pandoc + LaTeX is installed
-+-- manuscript.epub            # Only if Pandoc is installed
+  manuscript.md              # Full novel, ready to read
+  project.json               # Metadata (title, genre, chapter count)
+  spec.json                  # Seed concept analysis
+  world.json                 # World bible
+  characters.json            # Character profiles
+  outline.json               # Chapter-by-chapter outline
+  chapters/
+    chapter-001.md           # Each chapter (with variant, revision metadata)
+    chapter-002.md
+    ...
+    chapter-NNN.md
+  backpropagation.json       # Detected contradictions, drift, threads (v0.3: iterative)
+  backprop-revision-iter-1.json   # Per-iteration revision plans (v0.3)
+  revision-plan.json         # Per-chapter revision instructions
+  manuscript.pdf             # Only if Pandoc + LaTeX installed
+  manuscript.epub            # Only if Pandoc installed
 ```
 
 ---
 
 ## How the quality scoring works
 
-Each chapter gets scored two ways:
+**Mechanical score** (built-in, zero-cost, runs in microseconds):
+- Checks banned overused words (suddenly, very, gaze, smirk, literally, etc.)
+- Measures tell-don't-show patterns (felt that, knew that, realized that)
+- Analyzes sentence length variance (good pacing = varied sentence lengths)
+- Scores 0-10, starts at 7.0, applies penalties
 
-**Mechanical score** (automated, cheap, fast):
-- Checks for banned overused words (suddenly, very, gaze, smirk, etc.)
-- Measures "tell-don't-show" patterns (felt that, knew that, realized that)
-- Analyzes sentence length variety (good pacing = varied sentence lengths)
-- Scores from 0-10, starts at 7.0, penalties for weak writing
+**LLM critique** (dual-persona, deep analysis):
+- Literary Critic: scores prose craft, pacing, character depth, dialogue, structure
+- Professor of Fiction: scores thematic coherence, narrative ambition, subtext
+- They debate. Their consolidated output is a scored review with prioritized revision notes.
 
-**LLM critique** (AI judge, deep analysis):
-- A Kimi K2.6 model reads the chapter as a literary critic
-- Scores on: prose craft, pacing, character depth, dialogue, structure
-- Returns specific strengths, weaknesses, and prioritized revision instructions
+Thresholds: minimum pass at 6.0/10. Target 8.0/10. Chapters below 6.0 enter the revision loop.
 
-A chapter is "good enough" at 6.0/10. Target is 8.0/10.
+---
+
+## How the revision loop works
+
+```
+Draft chapter -> mechanical score
+  |
+  +-- score >= 6.0? --> done, accept
+  |
+  +-- score < 6.0? --> generate revision prompt (targeted mechanical fixes)
+       |
+       +-- send to LLM with current style profile
+       |
+       +-- re-score revision
+       |
+       +-- score improved? --> accept, loop again (up to 3 rounds max)
+       |
+       +-- score not improved? --> keep original, break
+```
+
+Only accepts revisions that measurably improve the mechanical score. No regressions.
+
+---
+
+## How backward propagation works
+
+After all chapters are drafted, the iterative loop scans for issues the forward pass can't catch:
+
+1. **Character trait drift** -- regex pattern matching across chapters (hair color, eye color, height descriptors)
+2. **Timeline regression** -- temporal keyword ordering: night -> morning -> afternoon -> evening, detects reversals
+3. **Plot thread closure** -- checks outline for thread introductions in early chapters, then verifies they appear in later chapters
+4. **Foreshadowing debt** -- outline promises (hints, setups) vs actual payoff in later chapters
+
+The iterative version runs up to 3 passes. If round 1 finds issues and generates fix instructions, round 2 re-scans to verify the fixes worked. If 80%+ of issues are unchanged between rounds, it detects stagnation and stops early. The final report tells you whether the manuscript converged cleanly or needs manual review.
+
+---
+
+## How GBrain canonical state works
+
+The GBrainStore connects to a structured memory server at localhost:8888. It creates a project-specific bank (e.g., `storyforge-the-great-novel`) and:
+
+1. **Before each chapter draft**: queries for character traits, world facts, active plot threads, and foreshadowing elements relevant to the current chapter
+2. **Formats results** into a prompt section the model can use during drafting
+3. **After each chapter**: stores new character traits, world facts, thread progress, foreshadowing obligations, and contradictions detected
+4. **Provides critical state** to the ReIO compressor so compressed context still includes durable facts
+
+The result: the model knows what it established in chapter 3 while writing chapter 14. No drift, no forgotten subplots.
+
+---
+
+## How ReIO compression works
+
+As chapters accumulate beyond the context window limit (900,000 tokens by default), raw summaries become too large. ReIO compresses them using a forgetting curve:
+
+- Chapters within the last 3: full summaries (you need high fidelity for recent events)
+- Chapters 4-8 back: condensed to 15-word one-liners (key events only)
+- Chapters 9+: grouped into 3-chapter arc summaries (plot-level only)
+- Critical state (character traits, active threads): always preserved at full fidelity
+
+Each chapter's context section shows a token gauge: `[Context: ~45,000 tokens (5% of 900,000 budget)]` so you can see how much compression is buying you.
+
+---
+
+## Recovery mode
+
+If the pipeline gets interrupted (network issue, rate limit, closed laptop):
+
+```bash
+python storyforge.py --resume 7 "original seed concept"
+```
+
+Or just run the same concept again -- the pipeline auto-detects checkpoint files and resumes from the next uncompleted phase.
+
+```bash
+python storyforge.py "same concept as before"
+```
+
+---
+
+## Running tests
+
+```bash
+pip install pytest
+pytest tests/ -v
+```
+
+86 tests covering: scoring mechanics, BM25 retrieval, revision prompt generation, backpropagation (character traits, timeline, plot threads, foreshadowing), adversarial editing (mechanical tighten, cut categories, cut patterns), GBrain client (HTTP mocking, bank management, recall, contradiction scanning), ReIO compression (compression tiers, arc summaries, empty state, token estimation), iterative backprop (convergence, iteration tracking, skipped state), genre templates (all 5 genres, beat lookup, required elements, tracking items, critical items), and rhetorical strategies (4 profiles with labeled strategies and pacing directives).
 
 ---
 
 ## Changing the configuration
 
-Everything is in `config.py`. You can change:
+Everything in `config.py`. You can change:
 
-- **Which AI models to use** for each phase
-- **Banned words list** (add your own pet peeves)
-- **Chapter length** (default: 4000 words)
-- **How many chapters** (default: 8-30)
-- **Scoring thresholds** (what counts as "good enough")
-- **Output directory** (default: ~/storyforge-projects/)
-- **API endpoint** (point at any OpenAI-compatible API)
+- Which AI models for each phase
+- Banned words list (add your own pet peeves)
+- Chapter length (default: 4000 words)
+- Chapter count range (default: 8-30)
+- Scoring thresholds (min pass: 6.0, target: 8.0)
+- Parallel variant count (default: 2, max: 3)
+- Max revision rounds (default: 3)
+- Rhetorical strategy profiles (add your own)
+- Output directory
+- API endpoint (point at any OpenAI-compatible API)
+- Token cost estimates per input/output token
+- GBrain host and port
+- ReIO compression budget and fidelity tiers
 
 ---
 
 ## Story structures
-
-The outline phase supports 5 different plot frameworks:
 
 | Structure | Description |
 |---|---|
@@ -161,37 +327,26 @@ The outline phase supports 5 different plot frameworks:
 | Seven-Point | Dan Wells' hook-through-resolution |
 | Freytag's Pyramid | Exposition through denouement |
 
-Default is Three-Act. Change in `pipeline/outline.py` or pass a structure key.
-
----
-
-## Recovery mode
-
-If your pipeline gets interrupted (network issue, rate limit, you close your laptop), you can resume from any chapter:
-
-```bash
-python storyforge.py --resume 7 "original seed concept"
-```
-
-It picks up where it left off - previous chapters stay as they were.
+Default: Three-Act. Change in `pipeline/outline.py` or pass a structure key.
 
 ---
 
 ## Origins
 
-This tool is a combinatorial fork of ideas from these open-source projects:
+- **Postwriter** (avigold) -- Rhetorical strategies, structured state, backward propagation design
+- **autonovel** (NousResearch) -- Pipeline architecture, dual immune system, Opus dual-persona review
+- **StoryWriter** (arxiv 2506.16445) -- ReIO compression, multi-agent drafting
+- **GBrain** (NousResearch fork) -- Structured memory server, bank-based canonical state
+- **AI_NovelGenerator** (YILING0013) -- State tracking, foreshadowing management
+- **gemini-writer** (Doriandarko) -- 1M context auto-compression, recovery mode
+- **storycraftr** (raestrada) -- Provider-agnostic config, embeddings context
+- **ai-book-writer** (adamwlarson) -- Multi-agent collaboration via AutoGen
+- **NovelGenerator** (KazKozDev) -- Parallel perspective tracking, emotional arcs
+- **libriscribe** (guerra2fernando) -- Multi-model support, fact-checking
+- **NovelWriter** (EdwardAThomson) -- Genre templates, story structures, quality analytics
+- **book-generator** (wesleyscholl) -- Pandoc/LaTeX export, KDP-ready output
 
-- **autonovel** (NousResearch) - Pipeline architecture, dual immune system, Opus review loop
-- **AI_NovelGenerator** (YILING0013) - State tracking, foreshadowing management
-- **gemini-writer** (Doriandarko) - 1M context auto-compression, recovery mode
-- **storycraftr** (raestrada) - Provider-agnostic config, embeddings context
-- **ai-book-writer** (adamwlarson) - Multi-agent collaboration via AutoGen
-- **NovelGenerator** (KazKozDev) - Parallel perspective tracking, emotional arcs
-- **libriscribe** (guerra2fernando) - Multi-model support, fact-checking
-- **NovelWriter** (EdwardAThomson) - Genre templates, story structures, quality analytics
-- **book-generator** (wesleyscholl) - Pandoc/LaTeX export, KDP-ready output
-
-The writing benchmark methodology comes from [lechmazur/writing](https://github.com/lechmazur/writing) - the most comprehensive LLM prose quality benchmark available.
+Benchmark methodology from [lechmazur/writing](https://github.com/lechmazur/writing).
 
 ---
 

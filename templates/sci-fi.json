@@ -1,0 +1,70 @@
+{
+  "genre": "sci-fi",
+  "description": "Science fiction with technology tracking, worldbuilding, and speculative elements",
+  "beats": [
+    {
+      "phase": "status_quo_dystopia",
+      "chapter_range": [1, 3],
+      "required_elements": [
+        "world_dystopian_element",
+        "protagonist_relationship_to_system",
+        "inciting_discovery"
+      ],
+      "description": "Establish the sci-fi world, protagonist's place in it, inciting discovery"
+    },
+    {
+      "phase": "the_question",
+      "chapter_range": [4, 7],
+      "required_elements": [
+        "central_question",
+        "resistance_or_investigation",
+        "tech_establishment"
+      ],
+      "description": "A central question emerges, investigation begins, technology rules established"
+    },
+    {
+      "phase": "deeper_in",
+      "chapter_range": [8, 12],
+      "required_elements": [
+        "conspiracy_reveal",
+        "cost_of_knowledge",
+        "ally_or_traitor"
+      ],
+      "description": "The conspiracy deepens, knowledge comes at a cost"
+    },
+    {
+      "phase": "moral_turning",
+      "chapter_range": [13, 16],
+      "required_elements": [
+        "moral_dilemma",
+        "tech_consequence",
+        "loss"
+      ],
+      "description": "The protagonist faces an impossible moral choice with tech implications"
+    },
+    {
+      "phase": "resolution_or_rebellion",
+      "chapter_range": [17, 22],
+      "required_elements": [
+        "climactic_action",
+        "tech_payoff",
+        "new_world_order_hint"
+      ],
+      "description": "The climax resolves the central tension, tech plays a crucial role, a new status quo emerges"
+    }
+  ],
+  "tracking": {
+    "critical_items": ["technology_rules", "worldbuilding_facts", "character_knowledge_gaps", "conspiracy_layers"],
+    "must_track": [
+      "technology capabilities and limits per chapter",
+      "what characters know vs what reader knows",
+      "conspiracy layer revealed per arc",
+      "world detail consistency"
+    ]
+  },
+  "structure": {
+    "recommended_chapters": 22,
+    "tension_arc": "inquiry_to_action",
+    "pacing_profile": "cerebral_then_paced"
+  }
+}

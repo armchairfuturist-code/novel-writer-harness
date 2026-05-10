@@ -1,9 +1,9 @@
 """StoryForge configuration — crofai model routing, scoring thresholds, API config.
 
 Model routing strategy:
-- Kimi K2.6 variants (prose-optimized, writing benchmark rank #8): chapter drafting, prose generation
-- DeepSeek V4 Pro (large context window): worldbuilding, planning, long-context tasks
-- Gemini 2.5 Flash Thinking (cheap/fast): scoring, mechanical checks, quick iterations
+- Kimi K2.6 and K2.6 Precision (prose-optimized): chapter drafting, prose generation
+- DeepSeek V4 Pro Precision (large context window): worldbuilding, planning, long-context tasks
+- GLM 4.7 Flash (cheap/fast): scoring, mechanical checks, quick iterations
 
 Usage:
     from config import Config
@@ -81,17 +81,17 @@ class Config:
         # --- Model Aliases (crofai model names) ---
         self.models = {
             # Kimi K2.6 variants — prose-optimized, 3 variants to benchmark
-            "kimi-speed": ModelConfig(name="kimi-k2.6-speed"),
-            "kimi-balanced": ModelConfig(name="kimi-k2.6-test"),
+            "kimi-speed": ModelConfig(name="kimi-k2.6"),
+            "kimi-balanced": ModelConfig(name="kimi-k2.6-precision"),
             "kimi-precision": ModelConfig(name="kimi-k2.6-precision"),
             # DeepSeek — large context window
             "deepseek": ModelConfig(name="deepseek-v4-pro-precision", temperature=0.7),
-            # Gemini Flash — cheap fast for scoring
-            "flash": ModelConfig(name="gemini-2.5-flash-thinking", temperature=0.3, max_tokens=4096),
+            # GLM 4.7 Flash — cheap/fast for scoring
+            "flash": ModelConfig(name="glm-4.7-flash", temperature=0.3, max_tokens=4096),
         }
 
         # --- Phase-to-Model Routing ---
-        # Each phase picks the best model for the job
+        # Each phase picks the best model for the task
         self.phase_models = {
             "seed": "deepseek",              # Planning — needs context
             "worldbuilding": "deepseek",      # Expansive world building — needs context
@@ -105,8 +105,7 @@ class Config:
 
         # --- Benchmark Models (3 Kimi K2.6 variants to test) ---
         self.benchmark_models = {
-            "kimi-k2.6-speed": ModelConfig(name="kimi-k2.6-speed"),
-            "kimi-k2.6-test": ModelConfig(name="kimi-k2.6-test"),
+            "kimi-k2.6": ModelConfig(name="kimi-k2.6"),
             "kimi-k2.6-precision": ModelConfig(name="kimi-k2.6-precision"),
         }
 
@@ -117,7 +116,7 @@ class Config:
         self.chapter = ChapterConfig()
 
         # --- Banned words / cliche list (autonovel-inspired) ---
-        self.banned_words: list[str] = field(default_factory=lambda: [
+        self.banned_words: list[str] = [
             "suddenly", "very", "quite", "literally", "actually",
             "basically", "incredibly", "amazingly", "unbelievably",
             "truly", "certainly", "surely", "obviously", "absolutely",
@@ -125,10 +124,16 @@ class Config:
             "gaze", "smirk", "chuckle", "sigh", "nod",
             "shrug", "blink", "frown", "raise an eyebrow",
             "as if", "as though", "seemed to", "began to", "started to",
-        ])
+        ]
 
         # --- Export defaults ---
         self.project_dir: str = os.path.join(os.path.expanduser("~"), "storyforge-projects")
+
+        # --- Token tracking ---
+        self.track_tokens: bool = True
+        self.token_cost_per_input: float = 0.000002
+        self.token_cost_per_output: float = 0.000010
+        self.report_usage: bool = True
 
     def _get_env(self, *names: str) -> str:
         """Get first available env var from a list of names."""
