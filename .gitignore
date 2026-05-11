@@ -38,3 +38,26 @@ Thumbs.db
 
 # Logs
 *.log
+
+# ── GSD baseline (auto-generated) ──
+.gsd
+.gsd-id
+.mcp.json
+.bg-shell/
+
+# ── Agent / skill artifacts (local harness, not project code) ──
+.agents/
+.qwen/
+.gsd.migrating/
+skills-lock.json
+*~
+*.code-workspace
+.env.*
+!.env.example
+node_modules/
+.next/
+target/
+vendor/
+coverage/
+.cache/
+tmp/

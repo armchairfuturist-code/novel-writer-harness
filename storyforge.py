@@ -488,6 +488,21 @@ def main():
         help="Genre template with structured beats and tracking",
     )
     parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Run in interactive interview mode (guided Q&A before generation)",
+    )
+    parser.add_argument(
+        "--depth",
+        choices=["quick", "standard", "comprehensive"],
+        default="standard",
+        help="Interview depth (quick=3 questions, standard=24, comprehensive=73). Default: standard",
+    )
+    parser.add_argument(
+        "--model-override",
+        help="Override the default model for interview phase",
+    )
+    parser.add_argument(
         "--no-iterative-backprop",
         action="store_true",
         help="Use one-shot backprop instead of iterative (default: iterative)",

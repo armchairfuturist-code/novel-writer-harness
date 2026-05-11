@@ -22,6 +22,25 @@ pip install httpx
 export CROFAI_API_KEY="your-api-key-here"
 ```
 
+### Interactive Interview Mode
+
+Instead of a one-sentence seed, develop your story idea through a guided Q&A:
+
+| Command | What it does |
+|---|---|
+| `python storyforge.py --interactive` | Quick interview (3 questions) |
+| `python storyforge.py --interactive --depth standard` | Standard interview (24 questions) |
+| `python storyforge.py --interactive --depth comprehensive` | Deep interview (73 questions, 6 dimensions) |
+| `python storyforge.py --interactive --genre fantasy` | Genre-specific questions mixed in |
+
+The interview walks through **6 novel dimensions**: Concept and Premise, World and Setting, Characters, Plot and Structure, Theme and Voice, and Market and Comparisons. Answers save every 5 questions. Press Ctrl+C to save progress.
+
+Resume with:
+
+```bash
+python storyforge.py --resume ~/storyforge-projects/interview-my-idea/
+```
+
 ### Write a novel
 
 ```bash
@@ -164,6 +183,8 @@ Configured for the crofai API (ai.nahcrof.com/v1). Change any model in `config.p
 | `python storyforge.py --no-reio "concept"` | Disable ReIO context compression |
 | `python storyforge.py --benchmark` | Benchmark model variants on prose quality |
 | `python storyforge.py --project-dir /path "concept"` | Override output directory |
+| `python storyforge.py --interactive` | Interactive interview mode (guided Q and A) |
+| `python storyforge.py --interactive --depth comprehensive` | Deep interview (73 questions, 6 dimensions) |
 | `python storyforge.py --help` | Show all options |
 
 ---
@@ -293,7 +314,7 @@ pip install pytest
 pytest tests/ -v
 ```
 
-86 tests covering: scoring mechanics, BM25 retrieval, revision prompt generation, backpropagation (character traits, timeline, plot threads, foreshadowing), adversarial editing (mechanical tighten, cut categories, cut patterns), hindsight client (HTTP mocking, bank management, recall, contradiction scanning), ReIO compression (compression tiers, arc summaries, empty state, token estimation), iterative backprop (convergence, iteration tracking, skipped state), genre templates (all 5 genres, beat lookup, required elements, tracking items, critical items), and rhetorical strategies (4 profiles with labeled strategies and pacing directives).
+105 tests covering (86 existing + 19 new interview tests): scoring mechanics, BM25 retrieval, revision prompt generation, backpropagation (character traits, timeline, plot threads, foreshadowing), adversarial editing (mechanical tighten, cut categories, cut patterns), hindsight client (HTTP mocking, bank management, recall, contradiction scanning), ReIO compression (compression tiers, arc summaries, empty state, token estimation), iterative backprop (convergence, iteration tracking, skipped state), genre templates (all 5 genres, beat lookup, required elements, tracking items, critical items), and rhetorical strategies (4 profiles with labeled strategies and pacing directives).
 
 ---
 

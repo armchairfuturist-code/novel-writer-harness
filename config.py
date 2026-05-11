@@ -101,6 +101,8 @@ class Config:
             "scoring": "flash",               # Mechanical checks — cheap and fast
             "critique": "kimi-precision",     # Deep literary critique — prose-aware
             "final_review": "deepseek",       # Full manuscript review — needs context
+            "interview": "deepseek",          # Interactive Q&A — large context for conversation
+            "interview_scoring": "flash",     # Thin-area detection — cheap and fast
         }
 
         # --- Benchmark Models (3 Kimi K2.6 variants to test) ---
