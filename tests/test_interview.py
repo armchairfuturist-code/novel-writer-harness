@@ -1,7 +1,8 @@
-"""Tests for the StoryForge interactive interview module (S01)."""
+"""Tests for the StoryForge interactive interview module (S01 + S02 resume)."""
 
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -12,6 +13,7 @@ from interview.questions import get_questions, get_dimension_counts, DIMENSION_O
 from interview.questions import Question, CONCEPT
 from interview.engine import _detect_thin_area, _save_checkpoint, _load_checkpoint, run_interview
 from interview.cli import present_question, get_answer
+from interview.resume import validate_checkpoint, recover_checkpoint, log_error, ALLOWED_VERSIONS, REQUIRED_ANSWER_KEYS
 
 
 class TestQuestionBank(unittest.TestCase):
@@ -129,3 +131,170 @@ class TestEngineImports(unittest.TestCase):
     def test_save_load_exist(self):
         self.assertTrue(callable(_save_checkpoint))
         self.assertTrue(callable(_load_checkpoint))
+
+
+def _make_valid_checkpoint():
+    """Build a structurally valid checkpoint dict for testing."""
+    return {
+        "version": 2,
+        "depth": "standard",
+        "genre": None,
+        "model_override": None,
+        "started_at": "2026-01-01T00:00:00",
+        "completed_at": "2026-01-01T01:00:00",
+        "answers": [
+            {
+                "question_id": "cp-01",
+                "dimension": "concept_premise",
+                "question": "What is the concept?",
+                "answer": "A story about dragons",
+                "is_thin": False,
+                "timestamp": "2026-01-01T00:05:00",
+            },
+            {
+                "question_id": "pl-01",
+                "dimension": "plot_structure",
+                "question": "What happens?",
+                "answer": "The hero wins",
+                "is_thin": True,
+                "timestamp": "2026-01-01T00:10:00",
+            },
+        ],
+        "thin_areas": [],
+    }
+
+
+class TestValidateCheckpoint(unittest.TestCase):
+
+    def test_valid_checkpoint_returns_none(self):
+        data = _make_valid_checkpoint()
+        self.assertIsNone(validate_checkpoint(data))
+
+    def test_not_a_dict(self):
+        self.assertIsNotNone(validate_checkpoint("not a dict"))
+        self.assertIsNotNone(validate_checkpoint(42))
+        self.assertIsNotNone(validate_checkpoint(None))
+
+    def test_unsupported_version(self):
+        data = _make_valid_checkpoint()
+        data["version"] = 1
+        err = validate_checkpoint(data)
+        self.assertIsNotNone(err)
+        self.assertIn("version", err)
+
+    def test_missing_version(self):
+        data = _make_valid_checkpoint()
+        del data["version"]
+        err = validate_checkpoint(data)
+        self.assertIsNotNone(err)
+        self.assertIn("version", err)
+
+    def test_answers_not_a_list(self):
+        data = _make_valid_checkpoint()
+        data["answers"] = "not a list"
+        err = validate_checkpoint(data)
+        self.assertIsNotNone(err)
+        self.assertIn("answers", err)
+
+    def test_missing_answers_key(self):
+        data = _make_valid_checkpoint()
+        del data["answers"]
+        err = validate_checkpoint(data)
+        self.assertIsNotNone(err)
+        self.assertIn("answers", err)
+
+    def test_answer_entry_missing_key(self):
+        data = _make_valid_checkpoint()
+        del data["answers"][0]["answer"]
+        err = validate_checkpoint(data)
+        self.assertIsNotNone(err)
+        self.assertIn("missing required keys", err)
+
+    def test_answer_value_not_string(self):
+        data = _make_valid_checkpoint()
+        data["answers"][0]["answer"] = 42
+        err = validate_checkpoint(data)
+        self.assertIsNotNone(err)
+        self.assertIn("not a string", err)
+
+    def test_answer_value_none(self):
+        data = _make_valid_checkpoint()
+        data["answers"][0]["answer"] = None
+        err = validate_checkpoint(data)
+        self.assertIsNotNone(err)
+        self.assertIn("not a string", err)
+
+    def test_answer_entry_not_dict(self):
+        data = _make_valid_checkpoint()
+        data["answers"].append("not a dict")
+        err = validate_checkpoint(data)
+        self.assertIsNotNone(err)
+        self.assertIn("not a dict", err)
+
+    def test_empty_answers_list(self):
+        data = _make_valid_checkpoint()
+        data["answers"] = []
+        self.assertIsNone(validate_checkpoint(data))
+
+
+class TestRecoverCheckpoint(unittest.TestCase):
+
+    def test_returns_none_placeholder(self):
+        """Currently no backup mechanism — always returns None."""
+        self.assertIsNone(recover_checkpoint("/tmp"))
+        self.assertIsNone(recover_checkpoint("/nonexistent"))
+
+
+class TestLogError(unittest.TestCase):
+
+    def test_writes_iso_timestamped_entry(self):
+        with tempfile.TemporaryDirectory() as td:
+            log_error(td, "Something went wrong")
+            log_error(td, "Another error")
+            path = os.path.join(td, "errors.log")
+            self.assertTrue(os.path.exists(path))
+            with open(path, encoding="utf-8") as f:
+                lines = f.readlines()
+            self.assertEqual(len(lines), 2)
+            # Each line: [ISO-timestamp] message
+            for line in lines:
+                self.assertRegex(line, r"^\[\d{4}-\d{2}-\d{2}T")
+            self.assertIn("Something went wrong", lines[0])
+            self.assertIn("Another error", lines[1])
+            self.assertIn("Something went wrong", lines[0])
+            self.assertIn("Another error", lines[1])
+
+    def test_creates_directory_if_missing(self):
+        with tempfile.TemporaryDirectory() as td:
+            nested = os.path.join(td, "a", "b", "c")
+            log_error(nested, "deep error")
+            path = os.path.join(nested, "errors.log")
+            self.assertTrue(os.path.exists(path))
+
+    def test_appends_not_overwrites(self):
+        with tempfile.TemporaryDirectory() as td:
+            log_error(td, "first")
+            log_error(td, "second")
+            path = os.path.join(td, "errors.log")
+            with open(path, encoding="utf-8") as f:
+                lines = f.readlines()
+            self.assertEqual(len(lines), 2)
+
+
+class TestResumeExports(unittest.TestCase):
+
+    def test_validate_checkpoint_exported(self):
+        self.assertTrue(callable(validate_checkpoint))
+
+    def test_recover_checkpoint_exported(self):
+        self.assertTrue(callable(recover_checkpoint))
+
+    def test_log_error_exported(self):
+        self.assertTrue(callable(log_error))
+
+    def test_constants_accessible(self):
+        self.assertIn(2, ALLOWED_VERSIONS)
+        self.assertIn("question_id", REQUIRED_ANSWER_KEYS)
+        self.assertIn("answer", REQUIRED_ANSWER_KEYS)
+        self.assertIn("is_thin", REQUIRED_ANSWER_KEYS)
+        self.assertIn("timestamp", REQUIRED_ANSWER_KEYS)
