@@ -43,6 +43,14 @@ from pipeline.backprop import run_backward_propagation
 from pipeline.iterative_backprop import run_iterative_backpropagation
 from pipeline.adversarial_edit import run_adversarial_edit
 from pipeline.export import export_manuscript
+from interview.engine import run_interview
+from interview.story_bible import compile_story_bible
+from interview.chapter_feedback import get_user_feedback
+
+# Interview (S02+)
+from interview.resume import validate_checkpoint, recover_checkpoint, log_error
+from interview.engine import _load_checkpoint as _load_interview_checkpoint
+from interview.memory_store import create_memory_store
 
 BANNER = """
   +=========================================================+
@@ -98,6 +106,8 @@ def run_full_pipeline(
     genre: Optional[str] = None,
     enable_gbrain: bool = True,
     enable_reio: bool = True,
+    precompiled_spec: Optional[dict] = None,
+    feedback_enabled: bool = True,
 ) -> str:
     """Run the full StoryForge pipeline from seed to export.
 
@@ -142,6 +152,19 @@ def run_full_pipeline(
     characters = None
     outline = None
     chapters = []
+
+    # ── Precompiled Spec (from interactive interview, skips seed phase) ──
+    if precompiled_spec is not None:
+        spec = precompiled_spec
+        completed.add("seed")
+        print("=== Phase 1/7: Seed === [from interview — compiled story bible]")
+        print(f"  Title: {spec.get('title', 'Untitled')}")
+        print(f"  Genre: {spec.get('genre', 'Unknown')}")
+        print(f"  POV: {spec.get('pov', 'Unknown')}")
+        print(f"  Chapters: {spec.get('target_chapters', 'Auto')}\n")
+        with open(os.path.join(project_dir, "spec.json"), "w", encoding="utf-8") as f:
+            json.dump(spec, f, indent=2)
+        _save_checkpoint(project_dir, completed)
 
     # ── Phase 1: Seed ──
     if "seed" not in completed:
@@ -302,6 +325,23 @@ def run_full_pipeline(
                     chapters.append({"chapter": len(chapters) + 1, "file": ch_path, "word_count": wc, "title": fn.replace(".md", "").replace("chapter-", "Ch ")})
         print(f"  Chapters: {len(chapters)}\n")
 
+    # ── Post-Chapter Feedback ──
+    if feedback_enabled and chapters:
+        print("=== Post-Chapter Feedback ===")
+        revisions_made = 0
+        for ch in chapters:
+            ch_path = ch.get("file", "")
+            ch_title = ch.get("title", f"Chapter {ch['chapter']}")
+            ch_num = ch.get("chapter", 0)
+            result = get_user_feedback(ch_path, ch_title, ch_num, config)
+            if result["action"] == "revise" and result["revised_text"]:
+                with open(ch_path, "w", encoding="utf-8") as f:
+                    f.write(result["revised_text"])
+                ch["word_count"] = len(result["revised_text"].split())
+                revisions_made += 1
+        print(f"  Revisions: {revisions_made}/{len(chapters)} chapters revised")
+        print()
+
     # ── Fact-Check ──
     if ("draft" in completed or "draft" in PHASES) and not quick:
         print("=== Fact-Check: Consistency Scan ===")
@@ -432,6 +472,32 @@ def run_full_pipeline(
     return project_dir
 
 
+def _store_interview_answers(store, result: dict) -> None:
+    """Store all interview answers into the given MemoryStore.
+
+    Each answer is stored with:
+    - key: ``<dimension>/<question_id>``
+    - value: the answer text
+    - tags: [dimension, question_id_prefix]
+
+    Follow-up answers are also stored with an additional ``follow_up`` tag.
+    """
+    answers = result.get("answers", [])
+    for entry in answers:
+        answer_text = entry.get("answer", "")
+        if not answer_text or answer_text in ("[INTERRUPTED]", "[SKIPPED]"):
+            continue
+
+        dimension = entry.get("dimension", "unknown")
+        qid = entry.get("question_id", "unknown")
+        key = f"{dimension}/{qid}"
+        tags = [dimension, qid.split("-")[0]] if "-" in qid else [dimension, qid]
+        if entry.get("is_follow_up"):
+            tags.append("follow_up")
+
+        store.store(key=key, value=answer_text, tags=tags)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="StoryForge v0.3 - autonomous novel-writing pipeline with GBrain, rhetorical strategies, ReIO, iterative backprop"
@@ -443,10 +509,27 @@ def main():
     )
     parser.add_argument(
         "--resume",
-        metavar="CHAPTER",
-        type=int,
-        default=1,
-        help="Resume drafting from chapter N",
+        metavar="PROJECT_DIR",
+        type=str,
+        default=None,
+        help="Resume an interrupted interview session from a project directory",
+    )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Run the interactive interview session for story development",
+    )
+    parser.add_argument(
+        "--depth",
+        choices=["quick", "standard", "comprehensive"],
+        default="standard",
+        help="Interview question depth (default: standard)",
+    )
+    parser.add_argument(
+        "--model-override",
+        type=str,
+        default=None,
+        help="Override the default model for interview LLM calls",
     )
     parser.add_argument(
         "--benchmark",
@@ -517,6 +600,24 @@ def main():
         action="store_true",
         help="Disable ReIO context compression",
     )
+    parser.add_argument(
+        "--feedback",
+        action="store_true",
+        default=None,
+        help="Enable post-chapter feedback review (default: on for --interactive/--resume, off for direct pipeline)",
+    )
+    parser.add_argument(
+        "--no-feedback",
+        action="store_true",
+        default=None,
+        help="Disable post-chapter feedback review",
+    )
+    parser.add_argument(
+        "--store",
+        choices=["json", "gbrain", "auto"],
+        default="json",
+        help="Memory store backend for interview answers (default: json)",
+    )
 
     args = parser.parse_args()
 
@@ -524,20 +625,183 @@ def main():
     if args.project_dir:
         config.project_dir = args.project_dir
 
+    # Determine feedback_enabled: default depends on path, --feedback/--no-feedback override
+    if args.feedback is True:
+        feedback_enabled = True
+    elif args.no_feedback is True:
+        feedback_enabled = False
+    else:
+        feedback_enabled = None  # will be set per-path below
+
     if args.benchmark:
         from tests.benchmark_writing import run_benchmark
         run_benchmark()
         return
 
+    # ── Interview resume path (--resume PROJECT_DIR) ──
+    if args.resume:
+        resume_dir = os.path.abspath(args.resume)
+        if not os.path.isdir(resume_dir):
+            log_error(resume_dir, f"Resume directory not found: {resume_dir}")
+            print(f"  Error: Resume directory not found: {resume_dir}")
+            sys.exit(1)
+
+        checkpoint = _load_interview_checkpoint(resume_dir)
+        if checkpoint is None:
+            log_error(resume_dir, "No valid checkpoint found for resume")
+            print(f"  Error: No checkpoint found in {resume_dir}")
+            sys.exit(1)
+
+        err = validate_checkpoint(checkpoint)
+        if err is not None:
+            log_error(resume_dir, f"Checkpoint validation failed: {err}")
+            print(f"  Error: Corrupted checkpoint — {err}")
+            recovered = recover_checkpoint(resume_dir)
+            if recovered is not None:
+                print("  Backup recovery succeeded. Resuming from backup.")
+                checkpoint = recovered
+            else:
+                print("  No backup available. Start a new session with --interactive.")
+                sys.exit(1)
+
+        # Print resume status
+        answers = checkpoint.get("answers", [])
+        total_questions = len(checkpoint.get("answers", []))
+        # Count non-interrupted answers
+        answered_count = len([a for a in answers if a.get("answer") != "[INTERRUPTED]"])
+        depth_label = checkpoint.get("depth", "standard").title()
+
+        # Try to determine current dimension from last answered question
+        last_dim = "Unknown"
+        last_qs = [a for a in answers if a.get("answer") != "[INTERRUPTED]"]
+        if last_qs:
+            last_dim = last_qs[-1].get("dimension", "Unknown").replace("_", " ").title()
+
+        print(f"  Resuming at question {answered_count + 1}/{total_questions} — {last_dim}")
+        print(f"  Depth: {depth_label}")
+
+        # Run interview with existing answers
+        try:
+            result = run_interview(
+                depth=checkpoint.get("depth", "standard"),
+                genre=checkpoint.get("genre"),
+                model_override=checkpoint.get("model_override"),
+                project_dir=resume_dir,
+                existing_answers=checkpoint,
+            )
+        except Exception as e:
+            log_error(resume_dir, f"Resume interview failed: {e}")
+            print(f"  Error: Interview failed — {e}")
+            sys.exit(1)
+
+        if result.get("completed_at"):
+            print(f"\n  Interview complete! Compiling story bible...")
+
+            # ── Populate MemoryStore with interview answers ──
+            store = create_memory_store(args.store, project_dir=resume_dir)
+            store_name = type(store).__name__
+            print(f"  MemoryStore: {store_name} ({args.store} backend)")
+            _store_interview_answers(store, result)
+            answer_count = len(result.get("answers", []))
+            print(f"  Stored {answer_count} interview answers in MemoryStore")
+            store.close()
+
+            # Compile story bible and launch pipeline
+            compiled = compile_story_bible(result)
+            compiled_spec = compiled["spec"]
+
+            print(f"  Title: {compiled_spec.get('title', 'Untitled')}")
+            print(f"  Genre: {compiled_spec.get('genre', 'Unknown')}")
+            print(f"  Chapters: {compiled_spec.get('target_chapters', 'Auto')}")
+            print(f"\n  Launching full pipeline from compiled bible...\n")
+
+            run_full_pipeline(
+                compiled_spec.get("title", "Untitled Story"),
+                config,
+                quick=args.quick,
+                parallel_variants=not args.single_variant,
+                dual_review=not args.single_review,
+                enable_backprop=not args.no_backprop,
+                enable_adversarial=not args.no_adversarial,
+                iterative_backprop=not args.no_iterative_backprop,
+                genre=args.genre,
+                enable_gbrain=not args.no_gbrain,
+                enable_reio=not args.no_reio,
+                precompiled_spec=compiled_spec,
+                feedback_enabled=feedback_enabled if feedback_enabled is not None else True,
+            )
+        return
+
+    # ── Interactive interview path (--interactive) ──
+    if args.interactive:
+        project_dir = os.path.abspath(args.project_dir) if args.project_dir else None
+        if project_dir is None:
+            project_dir = os.path.join(os.getcwd(), "storyforge-interview")
+        try:
+            result = run_interview(
+                depth=args.depth,
+                genre=args.genre,
+                model_override=args.model_override,
+                project_dir=project_dir,
+            )
+        except Exception as e:
+            log_error(project_dir, f"Interactive interview failed: {e}")
+            print(f"  Error: Interview failed — {e}")
+            sys.exit(1)
+
+        if result.get("completed_at"):
+            print(f"\n  Interview complete! Compiling story bible...")
+
+            # ── Populate MemoryStore with interview answers ──
+            store = create_memory_store(args.store, project_dir=project_dir)
+            store_name = type(store).__name__
+            print(f"  MemoryStore: {store_name} ({args.store} backend)")
+            _store_interview_answers(store, result)
+            answer_count = len(result.get("answers", []))
+            print(f"  Stored {answer_count} interview answers in MemoryStore")
+            store.close()
+
+            # Compile the story bible from interview answers
+            compiled = compile_story_bible(result)
+            compiled_spec = compiled["spec"]
+
+            # Print summary before launching the pipeline
+            print(f"  Title: {compiled_spec.get('title', 'Untitled')}")
+            print(f"  Genre: {compiled_spec.get('genre', 'Unknown')}")
+            print(f"  Chapters: {compiled_spec.get('target_chapters', 'Auto')}")
+            thin_count = len(result.get("thin_areas", []))
+            if thin_count:
+                print(f"  Thin areas identified: {thin_count}")
+            print(f"\n  Launching full pipeline from compiled bible...\n")
+
+            # Run the full pipeline with the compiled spec (skips seed phase)
+            run_full_pipeline(
+                compiled_spec.get("title", "Untitled Story"),
+                config,
+                quick=args.quick,
+                parallel_variants=not args.single_variant,
+                dual_review=not args.single_review,
+                enable_backprop=not args.no_backprop,
+                enable_adversarial=not args.no_adversarial,
+                iterative_backprop=not args.no_iterative_backprop,
+                genre=args.genre,
+                enable_gbrain=not args.no_gbrain,
+                enable_reio=not args.no_reio,
+                precompiled_spec=compiled_spec,
+                feedback_enabled=feedback_enabled if feedback_enabled is not None else True,
+            )
+        return
+
+    # ── Pipeline path (requires concept) ──
     if not args.concept:
         parser.print_help()
-        print("\nError: provide a seed concept or use --benchmark")
+        print("\nError: provide a seed concept or use --benchmark, --interactive, or --resume")
         sys.exit(1)
 
     run_full_pipeline(
         args.concept,
         config,
-        resume_from=args.resume,
+        resume_from=1,  # Pipeline auto-resumes via checkpoint detection
         quick=args.quick,
         parallel_variants=not args.single_variant,
         dual_review=not args.single_review,
@@ -547,6 +811,7 @@ def main():
         genre=args.genre,
         enable_gbrain=not args.no_gbrain,
         enable_reio=not args.no_reio,
+        feedback_enabled=feedback_enabled if feedback_enabled is not None else False,
     )
 
 

@@ -1,7 +1,8 @@
 """Interactive interview engine for StoryForge.
 
 Orchestrates the Q&A loop: loads questions, presents them via the CLI layer,
-collects answers, detects thin areas, and persists checkpoints.
+collects answers, detects thin areas, persists checkpoints, and performs
+adaptive drilling when answers are thin/vague.
 """
 
 import json
@@ -15,6 +16,8 @@ from interview.questions import get_questions, DIMENSION_ORDER
 from interview.cli import (
     present_question,
     get_answer,
+    present_follow_up,
+    get_follow_up_answer,
     show_section_header,
     show_completion_summary,
     welcome_banner,
@@ -23,6 +26,7 @@ from interview.cli import (
     bold,
     red,
 )
+from interview.drilling import generate_follow_ups
 
 CHECKPOINT_FILENAME = "interview_checkpoint.json"
 CHECKPOINT_INTERVAL = 5  # Save every N questions
@@ -51,6 +55,58 @@ def _detect_thin_area(answer: str, question) -> bool:
         for kw in question.follow_up_keywords:
             if kw.lower() in lower:
                 return True
+    return False
+
+
+def _handle_drilling(
+    q,
+    answer: str,
+    model_override: Optional[str],
+    result: dict,
+) -> bool:
+    """Generate and collect follow-up answers for a thin answer.
+
+    Calls generate_follow_ups() to get 2-3 targeted questions, presents
+    them via the CLI layer, and appends sub-answers to the result dict
+    with is_follow_up=True and original_question_id set.
+
+    The "Go with your idea" skip (via [SKIPPED]) is always available.
+    Gracefully handles LLM failures — if no questions are generated,
+    simply returns without appending anything.
+
+    Returns:
+        True if the user requested to exit (sentinel for caller to handle).
+        False if drilling completed normally or was skipped.
+    """
+    follow_ups = generate_follow_ups(
+        question_text=q.text,
+        answer=answer,
+        model_override=model_override,
+    )
+
+    if not follow_ups:
+        return False  # No questions to ask
+
+    for i, fq_text in enumerate(follow_ups, 1):
+        present_follow_up(q.text, fq_text, q.id, i)
+        fa = get_follow_up_answer()
+
+        # User wants to exit the entire interview
+        if fa is None:
+            return True
+
+        fa_entry = {
+            "question_id": q.id + f"_follow_up_{i}",
+            "original_question_id": q.id,
+            "dimension": q.dimension,
+            "question": fq_text,
+            "answer": fa,
+            "is_thin": False,
+            "is_follow_up": True,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        result["answers"].append(fa_entry)
+
     return False
 
 
@@ -101,10 +157,6 @@ def run_interview(
         Dict with keys: version, depth, started_at, completed_at,
                         answers (per-dimension lists), thin_areas
     """
-    if existing_answers:
-        # Resume mode — handled by S02
-        return existing_answers
-
     questions = get_questions(depth, genre)
     if not questions:
         print("  No questions loaded for this depth/genre combination.")
@@ -113,6 +165,109 @@ def run_interview(
     project_dir = project_dir or os.path.join(
         os.getcwd(), "storyforge-interview"
     )
+
+    if existing_answers:
+        # Resume mode — continue from last answered question
+        answered_ids = {
+            a["question_id"] for a in existing_answers.get("answers", [])
+            if a.get("answer") != "[INTERRUPTED]"
+        }
+        remaining = [q for q in questions if q.id not in answered_ids]
+
+        if not remaining:
+            print("  All questions already answered. Nothing to resume.")
+            return existing_answers
+
+        # Rebuild result from existing checkpoint
+        result = existing_answers
+        result["completed_at"] = None  # Reset completion marker
+
+        total = len(questions)
+        answered_count = len(answered_ids)
+        checkpoint_count = 0
+        new_answer_count = 0
+
+        try:
+            for q in remaining:
+                idx = questions.index(q) + 1  # Global index for display
+                present_question(q, idx, total)
+                answer = get_answer()
+
+                if answer is None:
+                    print()
+                    print(f"  {yellow('Saving progress and exiting...')}")
+                    result["answers"].append({
+                        "question_id": q.id,
+                        "dimension": q.dimension,
+                        "question": q.text,
+                        "answer": "[INTERRUPTED]",
+                        "is_thin": False,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+                    _save_checkpoint(result, project_dir)
+                    print(f"  Checkpoint saved. Resume with --resume {project_dir}")
+                    return result
+
+                is_thin = _detect_thin_area(answer, q) if answer != "[SKIPPED]" else False
+
+                entry = {
+                    "question_id": q.id,
+                    "dimension": q.dimension,
+                    "question": q.text,
+                    "answer": answer,
+                    "is_thin": is_thin,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                result["answers"].append(entry)
+
+                if is_thin:
+                    result["thin_areas"].append({
+                        "dimension": q.dimension,
+                        "question_id": q.id,
+                        "text": answer,
+                    })
+                    # Adaptive drilling: generate and ask follow-up questions
+                    if _handle_drilling(q, answer, model_override, result):
+                        # User wants to exit during follow-up drilling
+                        print()
+                        print(f"  {yellow('Saving progress and exiting...')}")
+                        result["completed_at"] = None
+                        result["answers"].append({
+                            "question_id": q.id + "_follow_up_interrupted",
+                            "original_question_id": q.id,
+                            "dimension": q.dimension,
+                            "question": "(drilling interrupted)",
+                            "answer": "[INTERRUPTED]",
+                            "is_thin": False,
+                            "is_follow_up": True,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        })
+                        _save_checkpoint(result, project_dir)
+                        print(f"  Checkpoint saved. Resume with --resume {project_dir}")
+                        return result
+
+                new_answer_count += 1
+                if new_answer_count % CHECKPOINT_INTERVAL == 0:
+                    _save_checkpoint(result, project_dir)
+                    checkpoint_count += 1
+
+        except (KeyboardInterrupt, EOFError):
+            print()
+            print("  " + yellow('Session interrupted. Saving progress...'))
+            result["completed_at"] = None
+            _save_checkpoint(result, project_dir)
+            print(f"  {bold('Checkpoint saved.')} Resume with --resume {project_dir}")
+            return result
+
+        result["completed_at"] = datetime.now(timezone.utc).isoformat()
+        _save_checkpoint(result, project_dir)
+
+        new_total = len(result["answers"])
+        thin_count = len(result["thin_areas"])
+        show_completion_summary(new_total, thin_count, total)
+        closing_message(project_dir)
+
+        return result
 
     welcome_banner()
 
@@ -185,6 +340,25 @@ def run_interview(
                     "question_id": q.id,
                     "text": answer,
                 })
+                # Adaptive drilling: generate and ask follow-up questions
+                if _handle_drilling(q, answer, model_override, result):
+                    # User wants to exit during follow-up drilling
+                    print()
+                    print(f"  {yellow('Saving progress and exiting...')}")
+                    result["completed_at"] = None
+                    result["answers"].append({
+                        "question_id": q.id + "_follow_up_interrupted",
+                        "original_question_id": q.id,
+                        "dimension": q.dimension,
+                        "question": "(drilling interrupted)",
+                        "answer": "[INTERRUPTED]",
+                        "is_thin": False,
+                        "is_follow_up": True,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+                    _save_checkpoint(result, project_dir)
+                    print(f"  Checkpoint saved. Resume with --resume {project_dir}")
+                    return result
 
             # Periodic checkpoint
             if idx % CHECKPOINT_INTERVAL == 0:
