@@ -85,7 +85,7 @@ class Config:
             "kimi-balanced": ModelConfig(name="kimi-k2.6-precision"),
             "kimi-precision": ModelConfig(name="kimi-k2.6-precision"),
             # DeepSeek — large context window
-            "deepseek": ModelConfig(name="deepseek-v4-pro-precision", temperature=0.7),
+            "deepseek": ModelConfig(name="deepseek-v4-pro-precision", temperature=0.7, max_tokens=16384),
             # GLM 4.7 Flash — cheap/fast for scoring
             "flash": ModelConfig(name="qwen3.5-9b", temperature=0.3, max_tokens=4096),
         }

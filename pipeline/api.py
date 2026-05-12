@@ -193,7 +193,7 @@ class CrofaiClient:
 
     def __init__(self, config: Optional[Config] = None, use_cache: bool = False):
         self.config = config or Config()
-        self._http = httpx.Client(timeout=300.0)
+        self._http = httpx.Client(timeout=600.0)
         self.use_cache = use_cache
 
     def __enter__(self):
