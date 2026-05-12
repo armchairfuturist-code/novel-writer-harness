@@ -381,15 +381,21 @@ class TestFactoryFunction(unittest.TestCase):
             self.assertIsInstance(store, MemoryStore)
             store.close()
 
-    def test_factory_gbrain_raises(self):
+    def test_factory_gbrain_falls_back_to_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            with self.assertRaises(NotImplementedError):
-                create_memory_store("gbrain", project_dir=tmpdir)
+            store = create_memory_store("gbrain", project_dir=tmpdir)
+            # Without a running GBrain server, this should fall back to JSON
+            self.assertIsInstance(store, JSONMemoryStore)
+            self.assertIsInstance(store, MemoryStore)
+            store.close()
 
-    def test_factory_auto_raises(self):
+    def test_factory_auto_falls_back_to_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            with self.assertRaises(NotImplementedError):
-                create_memory_store("auto", project_dir=tmpdir)
+            store = create_memory_store("auto", project_dir=tmpdir)
+            # Without GBrain server available, auto falls back to JSON
+            self.assertIsInstance(store, JSONMemoryStore)
+            self.assertIsInstance(store, MemoryStore)
+            store.close()
 
     def test_factory_case_insensitive(self):
         with tempfile.TemporaryDirectory() as tmpdir:

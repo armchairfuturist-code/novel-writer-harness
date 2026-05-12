@@ -23,6 +23,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from pipeline.gbrain_client import GBrainStore
+
 
 # ── Abstract Interface ──────────────────────────────────────────────
 
@@ -261,6 +263,95 @@ class JSONMemoryStore(MemoryStore):
             pass  # Best-effort persistence
 
 
+# ── GBrain-Backed Implementation ───────────────────────────────────
+
+
+class GBrainStoreAdapter(MemoryStore):
+    """Adapter wrapping GBrainStore behind the MemoryStore interface.
+
+    Maps:
+    - ``store(key, value, tags, metadata)`` → ``GBrainStore.store_memory(content=value, ...)``
+    - ``recall(query, k, tag_filter)`` → ``GBrainStore.recall(...)`` with result re-shaping
+    - ``format_context(query, max_items)`` → ``[CONTEXT FROM GBRAIN]`` block
+    - ``close()`` → ``GBrainStore.close()``
+    """
+
+    def __init__(self, project_dir: str | os.PathLike) -> None:
+        project_id = Path(project_dir).name
+        self._gbrain = GBrainStore(project_id=project_id)
+        self._connected = self._gbrain.ensure_bank_safe()
+
+    # ── Public API ───────────────────────────────────────────────────
+
+    @property
+    def connected(self) -> bool:
+        """Whether the GBrain connection was established successfully."""
+        return self._connected
+
+    def store(
+        self,
+        key: str,
+        value: str,
+        tags: Optional[list[str]] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> str:
+        meta = dict(metadata or {})
+        meta["_key"] = key
+        success = self._gbrain.store_memory(
+            content=value,
+            tags=tags or [],
+            importance=0.5,
+            metadata=meta,
+        )
+        if success:
+            return f"gbrain_{int(time.time())}_{hash(key) & 0xFFFF:04x}"
+        return ""
+
+    def recall(
+        self,
+        query: str,
+        k: int = 5,
+        tag_filter: Optional[list[str]] = None,
+    ) -> list[dict[str, Any]]:
+        results = self._gbrain.recall(
+            query=query,
+            k=k,
+            tag_filter=tag_filter,
+        )
+        transformed = []
+        for r in results:
+            meta = r.get("metadata", {}) or {}
+            rid = r.get("id", "")
+            transformed.append({
+                "id": rid,
+                "key": meta.get("_key", rid),
+                "value": r.get("content", ""),
+                "tags": r.get("tags", []),
+                "metadata": meta,
+                "timestamp": r.get("timestamp", ""),
+                "score": r.get("score", 0.0),
+            })
+        return transformed
+
+    def format_context(self, query: str, max_items: int = 5) -> str:
+        results = self.recall(query, k=max_items)
+        results = results[:max_items]
+        if not results:
+            return "[CONTEXT FROM GBRAIN: no relevant memories found]"
+
+        lines = ["[CONTEXT FROM GBRAIN]", ""]
+        for i, m in enumerate(results, 1):
+            tags_str = ", ".join(m.get("tags", [])) or "(untagged)"
+            lines.append(f"{i}. [{m['key']}] ({tags_str})")
+            lines.append(f"   {m['value'][:200]}")
+            lines.append("")
+        lines.append("[/CONTEXT FROM GBRAIN]")
+        return "\n".join(lines)
+
+    def close(self) -> None:
+        self._gbrain.close()
+
+
 # ── Factory ─────────────────────────────────────────────────────────
 
 
@@ -277,11 +368,21 @@ def create_memory_store(
     Returns:
         An initialised MemoryStore instance.
 
-    Raises:
-        NotImplementedError: For ``'gbrain'`` and ``'auto'`` (reserved for T03).
+    For ``'gbrain'`` and ``'auto'``, the factory probes the GBrain HTTP API.
+    If GBrain is unreachable, it transparently falls back to
+    :class:`JSONMemoryStore` so the caller always receives a usable store.
     """
     norm = store_type.strip().lower()
     if norm == "json":
+        return JSONMemoryStore(project_dir=project_dir)
+    if norm in ("gbrain", "auto"):
+        try:
+            adapter = GBrainStoreAdapter(project_dir=project_dir)
+            if adapter.connected:
+                return adapter
+            adapter.close()
+        except Exception:
+            pass
         return JSONMemoryStore(project_dir=project_dir)
     msg = (
         f"Memory store type {store_type!r} is not implemented. "
