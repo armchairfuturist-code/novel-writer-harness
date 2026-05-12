@@ -1,9 +1,10 @@
 """CLI interaction layer for the StoryForge interview engine.
 
-Provides prompting, progress indication, section headers, and multi-line input.
-Zero external dependencies — uses only print() and input() from stdlib.
+Provides prompting, progress indication, section headers, multi-line input,
+and follow-up question presentation for the adaptive drilling module.
 """
 
+import os
 import sys
 from typing import Optional
 
@@ -73,6 +74,42 @@ def get_answer() -> Optional[str]:
         return None
 
     return " ".join(lines)
+
+
+def present_follow_up(question_text: str, follow_up: str, parent_id: str, index: int) -> None:
+    """Display a follow-up drilling question with visual sub-question indicator.
+
+    Args:
+        question_text: The original question text (for context).
+        follow_up: The generated follow-up question.
+        parent_id: The original question ID this follow-up relates to.
+        index: 1-based index of this follow-up question.
+    """
+    print()
+    print(f"  {yellow('[follow-up]')} {bold('Drilling deeper...')}")
+    print(f"  {cyan('(on:)')} {question_text[:60]}{'...' if len(question_text) > 60 else ''}")
+    print()
+    print(f"  {bold(cyan(f'  #{index}'))} {follow_up}")
+    print()
+
+
+def get_follow_up_answer() -> Optional[str]:
+    """Read a single-line answer for a follow-up question.
+
+    Supports the same navigation commands as get_answer(), but expects
+    only a single line of input (follow-ups are targeted, not broad).
+    Returns None for interrupt/quit, "[SKIPPED]" for skip.
+    """
+    try:
+        line = input("  > ").strip()
+        if line.lower() in ("q", "quit", "exit"):
+            return None
+        if line.lower() in ("skip", "go with your idea", ""):
+            return "[SKIPPED]"
+        return line
+    except (KeyboardInterrupt, EOFError):
+        print()
+        return None
 
 
 def show_section_header(dimension_key: str, depth: str, current: int, total: int) -> None:
