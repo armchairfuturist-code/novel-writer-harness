@@ -298,3 +298,86 @@ class TestResumeExports(unittest.TestCase):
         self.assertIn("answer", REQUIRED_ANSWER_KEYS)
         self.assertIn("is_thin", REQUIRED_ANSWER_KEYS)
         self.assertIn("timestamp", REQUIRED_ANSWER_KEYS)
+
+
+class TestContextMonitor(unittest.TestCase):
+    """Tests for interview.context_monitor — ContextMonitor and estimate_tokens."""
+
+    def test_estimate_tokens_short(self):
+        from interview.context_monitor import estimate_tokens
+        self.assertEqual(estimate_tokens("hi"), 0)  # 2 // 4 = 0
+        self.assertEqual(estimate_tokens("hello"), 1)  # 5 // 4 = 1
+        self.assertEqual(estimate_tokens(""), 0)
+
+    def test_estimate_tokens_long(self):
+        from interview.context_monitor import estimate_tokens
+        self.assertEqual(estimate_tokens("a" * 100), 25)
+
+    def test_monitor_default_init(self):
+        from interview.context_monitor import ContextMonitor
+        cm = ContextMonitor()
+        self.assertEqual(cm.limit, 128000)
+        self.assertEqual(cm.warn_at, 89600)  # int(128000 * 0.70)
+        self.assertEqual(cm.accumulated, 0)
+        self.assertFalse(cm.has_warned)
+
+    def test_monitor_custom_model(self):
+        from interview.context_monitor import ContextMonitor
+        cm = ContextMonitor("flash")
+        self.assertEqual(cm.limit, 128000)
+
+    def test_monitor_unknown_model_fallback(self):
+        from interview.context_monitor import ContextMonitor
+        cm = ContextMonitor("no-such-model")
+        self.assertEqual(cm.limit, 128000)
+
+    def test_add_qa_accumulates(self):
+        from interview.context_monitor import ContextMonitor
+        cm = ContextMonitor()
+        cm.add_qa("short q", "short a")
+        # len("short q")=7//4=1 + len("short a")=7//4=1 = 2
+        self.assertEqual(cm.accumulated, 2)
+
+    def test_check_below_threshold(self):
+        from interview.context_monitor import ContextMonitor
+        cm = ContextMonitor()
+        cm.add_qa("", "")
+        self.assertIsNone(cm.check())
+        self.assertFalse(cm.has_warned)
+
+    def test_check_triggers_warning(self):
+        from interview.context_monitor import ContextMonitor
+        cm = ContextMonitor()
+        # Need accumulated > warn_at (89600) → answer needs ~358400 chars
+        cm.add_qa("x", "a" * 360000)
+        msg = cm.check()
+        self.assertIsNotNone(msg)
+        self.assertTrue(cm.has_warned)
+        self.assertIn("Context Warning", msg)
+        self.assertIn("Continue", msg)
+        self.assertIn("Export and resume later", msg)
+        self.assertIn("128,000", msg)  # limit
+
+    def test_check_one_shot(self):
+        from interview.context_monitor import ContextMonitor
+        cm = ContextMonitor()
+        cm.add_qa("x", "a" * 360000)
+        self.assertIsNotNone(cm.check())
+        self.assertIsNone(cm.check())  # second call returns None
+
+    def test_display_context_warning_stub(self):
+        from interview.context_monitor import ContextMonitor
+        cm = ContextMonitor()
+        result = cm.display_context_warning("test message")
+        self.assertEqual(result, "continue")
+
+    def test_model_context_limits_contains_all_aliases(self):
+        from interview.context_monitor import MODEL_CONTEXT_LIMITS
+        for alias in ("deepseek", "kimi-speed", "kimi-balanced", "kimi-precision", "flash"):
+            self.assertIn(alias, MODEL_CONTEXT_LIMITS)
+            self.assertGreater(MODEL_CONTEXT_LIMITS[alias], 0)
+
+    def test_imports_from_package(self):
+        from interview import ContextMonitor, estimate_tokens
+        self.assertIs(ContextMonitor, ContextMonitor)
+        self.assertTrue(callable(estimate_tokens))
