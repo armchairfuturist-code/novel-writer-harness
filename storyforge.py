@@ -45,6 +45,7 @@ from pipeline.adversarial_edit import run_adversarial_edit
 from pipeline.export import export_manuscript
 from interview.engine import run_interview
 from interview.story_bible import compile_story_bible
+from interview.chapter_feedback import get_user_feedback
 
 # Interview (S02+)
 from interview.resume import validate_checkpoint, recover_checkpoint, log_error
@@ -105,6 +106,7 @@ def run_full_pipeline(
     enable_gbrain: bool = True,
     enable_reio: bool = True,
     precompiled_spec: Optional[dict] = None,
+    feedback_enabled: bool = True,
 ) -> str:
     """Run the full StoryForge pipeline from seed to export.
 
@@ -321,6 +323,23 @@ def run_full_pipeline(
                         wc = 0
                     chapters.append({"chapter": len(chapters) + 1, "file": ch_path, "word_count": wc, "title": fn.replace(".md", "").replace("chapter-", "Ch ")})
         print(f"  Chapters: {len(chapters)}\n")
+
+    # ── Post-Chapter Feedback ──
+    if feedback_enabled and chapters:
+        print("=== Post-Chapter Feedback ===")
+        revisions_made = 0
+        for ch in chapters:
+            ch_path = ch.get("file", "")
+            ch_title = ch.get("title", f"Chapter {ch['chapter']}")
+            ch_num = ch.get("chapter", 0)
+            result = get_user_feedback(ch_path, ch_title, ch_num, config)
+            if result["action"] == "revise" and result["revised_text"]:
+                with open(ch_path, "w", encoding="utf-8") as f:
+                    f.write(result["revised_text"])
+                ch["word_count"] = len(result["revised_text"].split())
+                revisions_made += 1
+        print(f"  Revisions: {revisions_made}/{len(chapters)} chapters revised")
+        print()
 
     # ── Fact-Check ──
     if ("draft" in completed or "draft" in PHASES) and not quick:
@@ -539,12 +558,32 @@ def main():
         action="store_true",
         help="Disable ReIO context compression",
     )
+    parser.add_argument(
+        "--feedback",
+        action="store_true",
+        default=None,
+        help="Enable post-chapter feedback review (default: on for --interactive/--resume, off for direct pipeline)",
+    )
+    parser.add_argument(
+        "--no-feedback",
+        action="store_true",
+        default=None,
+        help="Disable post-chapter feedback review",
+    )
 
     args = parser.parse_args()
 
     config = Config()
     if args.project_dir:
         config.project_dir = args.project_dir
+
+    # Determine feedback_enabled: default depends on path, --feedback/--no-feedback override
+    if args.feedback is True:
+        feedback_enabled = True
+    elif args.no_feedback is True:
+        feedback_enabled = False
+    else:
+        feedback_enabled = None  # will be set per-path below
 
     if args.benchmark:
         from tests.benchmark_writing import run_benchmark
@@ -632,6 +671,7 @@ def main():
                 enable_gbrain=not args.no_gbrain,
                 enable_reio=not args.no_reio,
                 precompiled_spec=compiled_spec,
+                feedback_enabled=feedback_enabled if feedback_enabled is not None else True,
             )
         return
 
@@ -682,6 +722,7 @@ def main():
                 enable_gbrain=not args.no_gbrain,
                 enable_reio=not args.no_reio,
                 precompiled_spec=compiled_spec,
+                feedback_enabled=feedback_enabled if feedback_enabled is not None else True,
             )
         return
 
@@ -704,6 +745,7 @@ def main():
         genre=args.genre,
         enable_gbrain=not args.no_gbrain,
         enable_reio=not args.no_reio,
+        feedback_enabled=feedback_enabled if feedback_enabled is not None else False,
     )
 
 
