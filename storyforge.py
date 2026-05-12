@@ -50,6 +50,7 @@ from interview.chapter_feedback import get_user_feedback
 # Interview (S02+)
 from interview.resume import validate_checkpoint, recover_checkpoint, log_error
 from interview.engine import _load_checkpoint as _load_interview_checkpoint
+from interview.memory_store import create_memory_store
 
 BANNER = """
   +=========================================================+
@@ -471,6 +472,32 @@ def run_full_pipeline(
     return project_dir
 
 
+def _store_interview_answers(store, result: dict) -> None:
+    """Store all interview answers into the given MemoryStore.
+
+    Each answer is stored with:
+    - key: ``<dimension>/<question_id>``
+    - value: the answer text
+    - tags: [dimension, question_id_prefix]
+
+    Follow-up answers are also stored with an additional ``follow_up`` tag.
+    """
+    answers = result.get("answers", [])
+    for entry in answers:
+        answer_text = entry.get("answer", "")
+        if not answer_text or answer_text in ("[INTERRUPTED]", "[SKIPPED]"):
+            continue
+
+        dimension = entry.get("dimension", "unknown")
+        qid = entry.get("question_id", "unknown")
+        key = f"{dimension}/{qid}"
+        tags = [dimension, qid.split("-")[0]] if "-" in qid else [dimension, qid]
+        if entry.get("is_follow_up"):
+            tags.append("follow_up")
+
+        store.store(key=key, value=answer_text, tags=tags)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="StoryForge v0.3 - autonomous novel-writing pipeline with GBrain, rhetorical strategies, ReIO, iterative backprop"
@@ -570,6 +597,12 @@ def main():
         default=None,
         help="Disable post-chapter feedback review",
     )
+    parser.add_argument(
+        "--store",
+        choices=["json", "gbrain", "auto"],
+        default="json",
+        help="Memory store backend for interview answers (default: json)",
+    )
 
     args = parser.parse_args()
 
@@ -649,6 +682,15 @@ def main():
         if result.get("completed_at"):
             print(f"\n  Interview complete! Compiling story bible...")
 
+            # ── Populate MemoryStore with interview answers ──
+            store = create_memory_store(args.store, project_dir=resume_dir)
+            store_name = type(store).__name__
+            print(f"  MemoryStore: {store_name} ({args.store} backend)")
+            _store_interview_answers(store, result)
+            answer_count = len(result.get("answers", []))
+            print(f"  Stored {answer_count} interview answers in MemoryStore")
+            store.close()
+
             # Compile story bible and launch pipeline
             compiled = compile_story_bible(result)
             compiled_spec = compiled["spec"]
@@ -694,6 +736,15 @@ def main():
 
         if result.get("completed_at"):
             print(f"\n  Interview complete! Compiling story bible...")
+
+            # ── Populate MemoryStore with interview answers ──
+            store = create_memory_store(args.store, project_dir=project_dir)
+            store_name = type(store).__name__
+            print(f"  MemoryStore: {store_name} ({args.store} backend)")
+            _store_interview_answers(store, result)
+            answer_count = len(result.get("answers", []))
+            print(f"  Stored {answer_count} interview answers in MemoryStore")
+            store.close()
 
             # Compile the story bible from interview answers
             compiled = compile_story_bible(result)
