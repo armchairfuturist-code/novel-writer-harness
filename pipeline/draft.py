@@ -648,7 +648,8 @@ def run_draft(
             profiles_to_use = DEFAULT_STYLE_PROFILES[:max_variants]
             variants = []
 
-            for si, (style_name, style_desc) in enumerate(profiles_to_use):
+            for si, style_name in enumerate(profiles_to_use):
+                style_desc = STYLE_PROFILES.get(style_name, "")
                 print(f"    Variant {si + 1}/{len(profiles_to_use)}: {style_name}...")
                 variant_result = _draft_single_variant(
                     client=client,
@@ -727,7 +728,9 @@ def run_draft(
             # Single variant (original behavior or 1 variant)
             best_style = "default"
             profiles_to_use = DEFAULT_STYLE_PROFILES[:1]
-            style_name, style_desc = profiles_to_use[0]
+            sv_name = profiles_to_use[0]
+            sv_desc = STYLE_PROFILES.get(sv_name, "")
+            style_name, style_desc = sv_name, sv_desc
 
             best_content = client.chat_with_retry(
                 model,
