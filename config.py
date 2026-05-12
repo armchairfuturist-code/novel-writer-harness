@@ -87,7 +87,7 @@ class Config:
             # DeepSeek — large context window
             "deepseek": ModelConfig(name="deepseek-v4-pro-precision", temperature=0.7),
             # GLM 4.7 Flash — cheap/fast for scoring
-            "flash": ModelConfig(name="glm-4.7-flash", temperature=0.3, max_tokens=4096),
+            "flash": ModelConfig(name="qwen3.5-9b", temperature=0.3, max_tokens=4096),
         }
 
         # --- Phase-to-Model Routing ---
