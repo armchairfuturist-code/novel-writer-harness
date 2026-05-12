@@ -726,36 +726,37 @@ def run_draft(
             print(f"    Selected: {best_style} (score: {best_score['total_score']}/10)")
         else:
             # Single variant (original behavior or 1 variant)
-            best_style = "default"
-            profiles_to_use = DEFAULT_STYLE_PROFILES[:1]
-            sv_name = profiles_to_use[0]
-            sv_desc = STYLE_PROFILES.get(sv_name, "")
-            style_name, style_desc = sv_name, sv_desc
-
-            best_content = client.chat_with_retry(
-                model,
-                messages=[{"role": "user", "content": CHAPTER_DRAFT_TEMPLATE.format(
-                    chapter_number=chapter_num,
-                    chapter_title=chapter_title,
-                    pov_character=pov,
-                    chapter_summary=summary,
-                    key_events="\n".join(f"- {e}" for e in key_events) if key_events else "",
-                    emotional_arc=emotional_arc or "",
-                    foreshadowing=foreshadowing or "",
-                    character_arc_beat=char_arc_beat or "",
-                    world_context=world_context or "",
-                    retrieved_context=retrieved_context,
-                    active_threads="\n".join(active_threads[-5:]) if active_threads else "",
-                    style_direction=style_desc,
-                )}],
-                system_prompt=DRAFT_SYSTEM_PROMPT,
-                temperature=0.8,
+            best_style = "suspense_first"
+            profile_name = best_style
+            profile_desc = STYLE_PROFILES.get(profile_name, "")
+            variant_result = _draft_single_variant(
+                client=client,
+                model=model,
+                chapter_num=chapter_num,
+                chapter_title=chapter_title,
+                pov=pov,
+                summary=summary,
+                key_events=key_events,
+                emotional_arc=emotional_arc,
+                foreshadowing=foreshadowing,
+                char_arc_beat=char_arc_beat,
+                world_context=world_context,
+                retrieved_context=retrieved_context,
+                compressed_context=compressed_context,
+                hindsight_context=hindsight_context,
+                active_threads=active_threads,
+                style_name=profile_name,
+                style_direction=profile_desc,
+                config=config,
+                scorer=scorer,
+                chapter_spec=chapter_spec,
             )
+            best_content = variant_result["content"]
             best_score = scorer.score_chapter(best_content)
             total_input_tokens += _estimate_tokens(CHAPTER_DRAFT_TEMPLATE)
             total_output_tokens += _estimate_tokens(best_content)
             total_variants_written = 1
-
+            
             # Revision loop on single variant
             if enable_revision:
                 best_content, best_score, rev_done = _run_revision_loop(
