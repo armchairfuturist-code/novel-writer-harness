@@ -501,6 +501,8 @@ def run_draft(
     parallel_variants: bool = True,
     max_variants: int = 2,
     enable_revision: bool = True,
+    enable_gbrain: bool = True,
+    enable_reio: bool = True,
 ) -> list[dict]:
     """Run the draft phase with revision loop and optional parallel variants.
 
