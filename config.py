@@ -96,7 +96,7 @@ class Config:
             "seed": "deepseek",              # Planning — needs context
             "worldbuilding": "deepseek",      # Expansive world building — needs context
             "characters": "kimi-balanced",    # Character depth — prose matters
-            "outline": "deepseek",            # Structural planning — needs context
+            "outline": "kimi-balanced",        # Structural planning — faster generation
             "draft": "kimi-precision",        # Actual chapter writing — prose quality matters most
             "scoring": "flash",               # Mechanical checks — cheap and fast
             "critique": "kimi-precision",     # Deep literary critique — prose-aware

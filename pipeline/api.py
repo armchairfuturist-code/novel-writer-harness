@@ -306,7 +306,7 @@ class CrofaiClient:
         model: ModelConfig,
         messages: list[dict],
         system_prompt: Optional[str] = None,
-        max_retries: int = 2,
+        max_retries: int = 3,
         **kwargs,
     ) -> str:
         """Chat completion with smart retry.
@@ -338,7 +338,7 @@ class CrofaiClient:
                     raise
 
                 if attempt < max_retries:
-                    delay = 2 ** attempt
+                    delay = 2 ** (attempt + 3)
                     time.sleep(delay)
 
         raise RuntimeError(f"All {max_retries + 1} attempts failed: {last_error}")
