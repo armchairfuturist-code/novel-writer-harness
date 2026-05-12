@@ -43,9 +43,10 @@ from pipeline.backprop import run_backward_propagation
 from pipeline.iterative_backprop import run_iterative_backpropagation
 from pipeline.adversarial_edit import run_adversarial_edit
 from pipeline.export import export_manuscript
+from interview.engine import run_interview
+from interview.story_bible import compile_story_bible
 
 # Interview (S02+)
-from interview import run_interview
 from interview.resume import validate_checkpoint, recover_checkpoint, log_error
 from interview.engine import _load_checkpoint as _load_interview_checkpoint
 
@@ -103,6 +104,7 @@ def run_full_pipeline(
     genre: Optional[str] = None,
     enable_gbrain: bool = True,
     enable_reio: bool = True,
+    precompiled_spec: Optional[dict] = None,
 ) -> str:
     """Run the full StoryForge pipeline from seed to export.
 
@@ -147,6 +149,19 @@ def run_full_pipeline(
     characters = None
     outline = None
     chapters = []
+
+    # ── Precompiled Spec (from interactive interview, skips seed phase) ──
+    if precompiled_spec is not None:
+        spec = precompiled_spec
+        completed.add("seed")
+        print("=== Phase 1/7: Seed === [from interview — compiled story bible]")
+        print(f"  Title: {spec.get('title', 'Untitled')}")
+        print(f"  Genre: {spec.get('genre', 'Unknown')}")
+        print(f"  POV: {spec.get('pov', 'Unknown')}")
+        print(f"  Chapters: {spec.get('target_chapters', 'Auto')}\n")
+        with open(os.path.join(project_dir, "spec.json"), "w", encoding="utf-8") as f:
+            json.dump(spec, f, indent=2)
+        _save_checkpoint(project_dir, completed)
 
     # ── Phase 1: Seed ──
     if "seed" not in completed:
@@ -593,7 +608,31 @@ def main():
             sys.exit(1)
 
         if result.get("completed_at"):
-            print(f"\n  {BANNER.splitlines()[2] if BANNER else 'Interview complete.'} Session complete!")
+            print(f"\n  Interview complete! Compiling story bible...")
+
+            # Compile story bible and launch pipeline
+            compiled = compile_story_bible(result)
+            compiled_spec = compiled["spec"]
+
+            print(f"  Title: {compiled_spec.get('title', 'Untitled')}")
+            print(f"  Genre: {compiled_spec.get('genre', 'Unknown')}")
+            print(f"  Chapters: {compiled_spec.get('target_chapters', 'Auto')}")
+            print(f"\n  Launching full pipeline from compiled bible...\n")
+
+            run_full_pipeline(
+                compiled_spec.get("title", "Untitled Story"),
+                config,
+                quick=args.quick,
+                parallel_variants=not args.single_variant,
+                dual_review=not args.single_review,
+                enable_backprop=not args.no_backprop,
+                enable_adversarial=not args.no_adversarial,
+                iterative_backprop=not args.no_iterative_backprop,
+                genre=args.genre,
+                enable_gbrain=not args.no_gbrain,
+                enable_reio=not args.no_reio,
+                precompiled_spec=compiled_spec,
+            )
         return
 
     # ── Interactive interview path (--interactive) ──
@@ -614,7 +653,36 @@ def main():
             sys.exit(1)
 
         if result.get("completed_at"):
-            print(f"\n  Interview complete! Answers saved to {project_dir}")
+            print(f"\n  Interview complete! Compiling story bible...")
+
+            # Compile the story bible from interview answers
+            compiled = compile_story_bible(result)
+            compiled_spec = compiled["spec"]
+
+            # Print summary before launching the pipeline
+            print(f"  Title: {compiled_spec.get('title', 'Untitled')}")
+            print(f"  Genre: {compiled_spec.get('genre', 'Unknown')}")
+            print(f"  Chapters: {compiled_spec.get('target_chapters', 'Auto')}")
+            thin_count = len(result.get("thin_areas", []))
+            if thin_count:
+                print(f"  Thin areas identified: {thin_count}")
+            print(f"\n  Launching full pipeline from compiled bible...\n")
+
+            # Run the full pipeline with the compiled spec (skips seed phase)
+            run_full_pipeline(
+                compiled_spec.get("title", "Untitled Story"),
+                config,
+                quick=args.quick,
+                parallel_variants=not args.single_variant,
+                dual_review=not args.single_review,
+                enable_backprop=not args.no_backprop,
+                enable_adversarial=not args.no_adversarial,
+                iterative_backprop=not args.no_iterative_backprop,
+                genre=args.genre,
+                enable_gbrain=not args.no_gbrain,
+                enable_reio=not args.no_reio,
+                precompiled_spec=compiled_spec,
+            )
         return
 
     # ── Pipeline path (requires concept) ──
