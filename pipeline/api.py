@@ -63,13 +63,57 @@ def _unwrap_json(text: str) -> str:
 
 
 def _repair_json(text: str) -> str:
-    """Attempt to repair common JSON model output issues."""
+    """Attempt to repair common JSON model output issues.
+
+    Handles:
+    1. Literal newlines inside string values (escape them)
+    2. Bare parenthetical annotations like 'age: 10 (child) / 26 (adult)'
+    """
     import re
+
+    # 1. Escape literal newlines inside JSON strings.
+    result = []
+    in_string = False
+    escape = False
+    for ch in text:
+        if escape:
+            escape = False
+            result.append(ch)
+            continue
+        if ch == chr(92):
+            escape = True
+            result.append(ch)
+            continue
+        if ch == chr(34):
+            in_string = not in_string
+            result.append(ch)
+            continue
+        if ch == chr(10) and in_string:
+            result.append(chr(92) + 'n')
+            continue
+        result.append(ch)
+    text = ''.join(result)
+
+    # 2. Fix bare unquoted values with parenthetical annotations on their own lines.
+    #    Only apply to lines that are unparseable by normal JSON.
+    #    First try parsing the cleaned text.
+    try:
+        import json as _json
+        _json.loads(text)
+        return text  # Already valid after step 1
+    except _json.JSONDecodeError:
+        pass
+
+    # 3. Line-level repair for unquoted annotations
     lines = text.split(chr(10))
     fixed_lines = []
 
     for line in lines:
         stripped = line.strip()
+        # Skip structural lines
+        if stripped in ('{', '}', '[', ']', '', ',') or stripped.startswith('//'):
+            fixed_lines.append(line)
+            continue
         if chr(58) in stripped:
             colon_idx = stripped.index(chr(58))
             key_part = stripped[:colon_idx]
