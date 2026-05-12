@@ -104,7 +104,9 @@ def _repair_json(text: str) -> str:
     except _json.JSONDecodeError:
         pass
 
-    # 3. Line-level repair for unquoted annotations
+    # 3. Line-level repair for unquoted annotations.
+    #    Only wrap the value up to the next comma or close-bracket.
+    import re as _re3
     lines = text.split(chr(10))
     fixed_lines = []
 
@@ -114,26 +116,55 @@ def _repair_json(text: str) -> str:
         if stripped in ('{', '}', '[', ']', '', ',') or stripped.startswith('//'):
             fixed_lines.append(line)
             continue
-        if chr(58) in stripped:
-            colon_idx = stripped.index(chr(58))
-            key_part = stripped[:colon_idx]
-            val_part = stripped[colon_idx + 1:].strip()
-
-            if val_part and not val_part.startswith(chr(34)) and not val_part.startswith(chr(91)) and not val_part.startswith(chr(123)):
-                has_paren = chr(40) in val_part
-                slash = chr(47)
-                has_slash = slash in val_part.replace('//', chr(32))
-                has_number = bool(re.search(r'[0-9]', val_part))
-                if (has_paren or has_slash) and has_number:
-                    comma = chr(44) if val_part.endswith(chr(44)) else ''
-                    clean_val = val_part.rstrip(chr(44))
-                    indent = line[:len(line) - len(line.lstrip())]
-                    new_line = indent + key_part + chr(58) + chr(32) + chr(34) + clean_val + chr(34) + comma
-                    fixed_lines.append(new_line)
-                    continue
+        # Match 'key': bare_value_pattern up to comma or end
+        m = _re3.match(r'^([^:]+):\s*(\d[^,}]*?)([,}])(.*)$', stripped)
+        if m:
+            key_part = m.group(1)
+            bare_val = m.group(2).rstrip()
+            closer = m.group(3)
+            rest = m.group(4)
+            # Check for parenthetical or annotated values
+            if (chr(40) in bare_val or chr(47) in bare_val) and _re3.search(r'[0-9]', bare_val):
+                indent = line[:len(line) - len(line.lstrip())]
+                comma = chr(44) if closer == chr(44) else ''
+                new_line = indent + key_part + chr(58) + chr(32) + chr(34) + bare_val + chr(34) + closer + rest
+                fixed_lines.append(new_line)
+                continue
         fixed_lines.append(line)
 
+    # 4. Final fallback: brace-counting extraction as dict
+    extracted = _extract_json(text)
+    if extracted is not None:
+        return json.dumps(extracted)
     return chr(10).join(fixed_lines)
+
+def _extract_json(text: str) -> dict:
+    """Extract the outermost JSON object from text, handling common issues."""
+    import re as _re
+    
+    # Remove trailing commas before ] or }
+    text = _re.sub(r',\s*(?=[}\]])', '', text)
+    
+    # Find outermost { ... } via brace counting  
+    depth = 0
+    start = -1
+    for i, ch in enumerate(text):
+        if ch == chr(123):
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == chr(125):
+            depth -= 1
+            if depth == 0 and start >= 0:
+                candidate = text[start:i+1]
+                try:
+                    import json as _json
+                    return _json.loads(candidate)
+                except _json.JSONDecodeError:
+                    pass
+    return None
+
+
 def parse_json_output(content: str, label: str = "response") -> dict:
     """Parse a model's JSON output, handling markdown wrapping and errors.
 
@@ -161,17 +192,13 @@ def parse_json_output(content: str, label: str = "response") -> dict:
                 pass
         # Try repair before giving up
         repaired = _repair_json(content)
-        if repaired != content:
-            try:
-                return json.loads(repaired)
-            except json.JSONDecodeError:
-                start2 = repaired.find("{")
-                end2 = repaired.rfind("}")
-                if start2 != -1 and end2 != -1 and end2 > start2:
-                    try:
-                        return json.loads(repaired[start2:end2+1])
-                    except json.JSONDecodeError:
-                        pass
+        try:
+            return json.loads(repaired)
+        except json.JSONDecodeError:
+            # Brace-counting extraction as final attempt
+            extracted = _extract_json(repaired)
+            if extracted is not None:
+                return extracted
         raise RuntimeError(
             f"Failed to parse {label} as JSON. "
             f"Response preview: {content[:300]}"
