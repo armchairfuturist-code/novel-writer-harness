@@ -31,7 +31,7 @@ Return JSON with the following structure. Include 1 protagonist, 1-2 deuteragoni
     {{
       "name": "Full name",
       "role": "protagonist/deuteragonist/antagonist/supporting",
-      "age": age,
+      "age": "Age description (e.g. early 20s, middle-aged, 10 years old)",
       "appearance": "Physical description (2-3 sentences)",
       "personality": "Core traits, temperament, quirks",
       "background": "Relevant backstory (2-3 paragraphs)",

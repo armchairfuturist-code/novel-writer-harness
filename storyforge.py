@@ -515,23 +515,6 @@ def main():
         help="Resume an interrupted interview session from a project directory",
     )
     parser.add_argument(
-        "--interactive",
-        action="store_true",
-        help="Run the interactive interview session for story development",
-    )
-    parser.add_argument(
-        "--depth",
-        choices=["quick", "standard", "comprehensive"],
-        default="standard",
-        help="Interview question depth (default: standard)",
-    )
-    parser.add_argument(
-        "--model-override",
-        type=str,
-        default=None,
-        help="Override the default model for interview LLM calls",
-    )
-    parser.add_argument(
         "--benchmark",
         action="store_true",
         help="Run Kimi K2.6 variant benchmark instead of pipeline",

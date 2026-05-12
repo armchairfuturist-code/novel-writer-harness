@@ -62,6 +62,34 @@ def _unwrap_json(text: str) -> str:
     return text
 
 
+def _repair_json(text: str) -> str:
+    """Attempt to repair common JSON model output issues."""
+    import re
+    lines = text.split(chr(10))
+    fixed_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        if chr(58) in stripped:
+            colon_idx = stripped.index(chr(58))
+            key_part = stripped[:colon_idx]
+            val_part = stripped[colon_idx + 1:].strip()
+
+            if val_part and not val_part.startswith(chr(34)) and not val_part.startswith(chr(91)) and not val_part.startswith(chr(123)):
+                has_paren = chr(40) in val_part
+                slash = chr(47)
+                has_slash = slash in val_part.replace('//', chr(32))
+                has_number = bool(re.search(r'[0-9]', val_part))
+                if (has_paren or has_slash) and has_number:
+                    comma = chr(44) if val_part.endswith(chr(44)) else ''
+                    clean_val = val_part.rstrip(chr(44))
+                    indent = line[:len(line) - len(line.lstrip())]
+                    new_line = indent + key_part + chr(58) + chr(32) + chr(34) + clean_val + chr(34) + comma
+                    fixed_lines.append(new_line)
+                    continue
+        fixed_lines.append(line)
+
+    return chr(10).join(fixed_lines)
 def parse_json_output(content: str, label: str = "response") -> dict:
     """Parse a model's JSON output, handling markdown wrapping and errors.
 
@@ -87,6 +115,19 @@ def parse_json_output(content: str, label: str = "response") -> dict:
                 return json.loads(content[start:end+1])
             except json.JSONDecodeError:
                 pass
+        # Try repair before giving up
+        repaired = _repair_json(content)
+        if repaired != content:
+            try:
+                return json.loads(repaired)
+            except json.JSONDecodeError:
+                start2 = repaired.find("{")
+                end2 = repaired.rfind("}")
+                if start2 != -1 and end2 != -1 and end2 > start2:
+                    try:
+                        return json.loads(repaired[start2:end2+1])
+                    except json.JSONDecodeError:
+                        pass
         raise RuntimeError(
             f"Failed to parse {label} as JSON. "
             f"Response preview: {content[:300]}"
