@@ -103,6 +103,21 @@ class Config:
             "final_review": "deepseek",       # Full manuscript review — needs context
         }
 
+        # --- Interview Task-to-Model Routing ---
+        # Each interview dimension picks the best model based on lechmazur/writing
+        # benchmark rankings: DeepSeek for context-heavy Q&A, Kimi K2.6 for
+        # prose/literary comparisons, GLM Flash for scoring/detection/quick turns.
+        self.interview_models = {
+            "concept_premise": "deepseek",      # Broad creative context
+            "world_setting": "deepseek",         # Expansive world details
+            "characters": "kimi-balanced",      # Character depth — prose matters
+            "plot_structure": "deepseek",        # Structural complexity
+            "theme_voice": "kimi-balanced",      # Prose/literary nuance
+            "market_comparisons": "flash",       # Quick comparisons
+            "drilling": "flash",                 # Follow-up generation — cheap/fast
+            "compilation": "deepseek",           # Story bible compilation — large context
+        }
+
         # --- Benchmark Models (3 Kimi K2.6 variants to test) ---
         self.benchmark_models = {
             "kimi-k2.6": ModelConfig(name="kimi-k2.6"),
@@ -148,6 +163,27 @@ class Config:
         key = self.phase_models.get(phase, "kimi-balanced")
         return self.models[key]
 
+    def model_for_interview(self, task: str, override: Optional[str] = None) -> ModelConfig:
+        """Get the best model config for an interview task.
+
+        Args:
+            task: Interview dimension or task type (e.g. 'concept_premise',
+                  'drilling', 'compilation').
+            override: Optional model alias to use instead of the routed one.
+                      Must be a key in self.models (e.g. 'kimi-balanced').
+
+        Returns:
+            ModelConfig for the routed or overridden model.
+        """
+        if override and override in self.models:
+            return self.models[override]
+        key = self.interview_models.get(task, "kimi-balanced")
+        return self.models[key]
+
     def model_for_benchmark(self, alias: str) -> ModelConfig:
-        """Get model config for benchmark variants."""
-        return self.benchmark_models.get(alias, self.benchmark_models["kimi-k2.6-test"])
+        """Get model config for benchmark variants.
+
+        Falls back to 'kimi-k2.6' (the base variant) when the requested
+        alias is not in the benchmark registry.
+        """
+        return self.benchmark_models.get(alias, self.benchmark_models["kimi-k2.6"])

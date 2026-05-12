@@ -209,6 +209,66 @@ class TestConfig(unittest.TestCase):
         self.assertIn("very", c.banned_words)
         self.assertNotIn("the", c.banned_words)
 
+    # ── Interview model routing ──
+
+    def test_model_for_interview(self):
+        c = Config()
+        model = c.model_for_interview("concept_premise")
+        self.assertEqual(model.name, "deepseek-v4-pro-precision")
+        model = c.model_for_interview("characters")
+        self.assertEqual(model.name, "kimi-k2.6-precision")
+        model = c.model_for_interview("drilling")
+        self.assertEqual(model.name, "glm-4.7-flash")
+
+    def test_model_for_interview_fallback(self):
+        """Unknown interview task falls back to 'kimi-balanced'."""
+        c = Config()
+        model = c.model_for_interview("nonexistent_dimension")
+        self.assertEqual(model.name, "kimi-k2.6-precision")
+
+    def test_model_for_interview_override(self):
+        """Override picks a different model from the registry."""
+        c = Config()
+        # Override to deepseek for a task that normally routes to kimi
+        model = c.model_for_interview("characters", override="deepseek")
+        self.assertEqual(model.name, "deepseek-v4-pro-precision")
+        # Override to flash for a context-heavy task
+        model = c.model_for_interview("world_setting", override="flash")
+        self.assertEqual(model.name, "glm-4.7-flash")
+
+    def test_model_for_interview_invalid_override(self):
+        """Invalid override key is ignored — uses routed model instead."""
+        c = Config()
+        model = c.model_for_interview("drilling", override="nonexistent-alias")
+        self.assertEqual(model.name, "glm-4.7-flash")
+
+    def test_interview_models_has_all_dimensions(self):
+        """All interview dimensions have a routing entry."""
+        c = Config()
+        expected = {
+            "concept_premise", "world_setting", "characters",
+            "plot_structure", "theme_voice", "market_comparisons",
+            "drilling", "compilation",
+        }
+        self.assertEqual(set(c.interview_models.keys()), expected)
+
+    # ── Benchmark model routing ──
+
+    def test_model_for_benchmark_known(self):
+        c = Config()
+        model = c.model_for_benchmark("kimi-k2.6")
+        self.assertEqual(model.name, "kimi-k2.6")
+        model = c.model_for_benchmark("kimi-k2.6-precision")
+        self.assertEqual(model.name, "kimi-k2.6-precision")
+
+    def test_model_for_benchmark_fallback(self):
+        """Unknown benchmark alias falls back to 'kimi-k2.6', not KeyError."""
+        c = Config()
+        model = c.model_for_benchmark("nonexistent-variant")
+        self.assertEqual(model.name, "kimi-k2.6")
+        model = c.model_for_benchmark("kimi-k2.6-test")  # the old broken key
+        self.assertEqual(model.name, "kimi-k2.6")
+
 
 if __name__ == "__main__":
     unittest.main()
