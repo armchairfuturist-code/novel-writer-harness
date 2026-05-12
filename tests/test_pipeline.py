@@ -218,7 +218,7 @@ class TestConfig(unittest.TestCase):
         model = c.model_for_interview("characters")
         self.assertEqual(model.name, "kimi-k2.6-precision")
         model = c.model_for_interview("drilling")
-        self.assertEqual(model.name, "glm-4.7-flash")
+        self.assertEqual(model.name, "qwen3.5-9b")
 
     def test_model_for_interview_fallback(self):
         """Unknown interview task falls back to 'kimi-balanced'."""
@@ -234,13 +234,13 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(model.name, "deepseek-v4-pro-precision")
         # Override to flash for a context-heavy task
         model = c.model_for_interview("world_setting", override="flash")
-        self.assertEqual(model.name, "glm-4.7-flash")
+        self.assertEqual(model.name, "qwen3.5-9b")
 
     def test_model_for_interview_invalid_override(self):
         """Invalid override key is ignored — uses routed model instead."""
         c = Config()
         model = c.model_for_interview("drilling", override="nonexistent-alias")
-        self.assertEqual(model.name, "glm-4.7-flash")
+        self.assertEqual(model.name, "qwen3.5-9b")
 
     def test_interview_models_has_all_dimensions(self):
         """All interview dimensions have a routing entry."""
