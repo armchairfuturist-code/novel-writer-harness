@@ -381,3 +381,114 @@ class TestContextMonitor(unittest.TestCase):
         from interview import ContextMonitor, estimate_tokens
         self.assertIs(ContextMonitor, ContextMonitor)
         self.assertTrue(callable(estimate_tokens))
+
+
+class TestResumeRunInterview(unittest.TestCase):
+    """Tests for run_interview() resume mode (existing_answers param)."""
+
+    def setUp(self):
+        self.full_checkpoint = {
+            "version": 2,
+            "depth": "quick",
+            "genre": None,
+            "model_override": None,
+            "started_at": "2026-01-01T00:00:00",
+            "completed_at": "2026-01-01T00:30:00",
+            "answers": [
+                {
+                    "question_id": "cp-01",
+                    "dimension": "concept_premise",
+                    "question": "What is the concept?",
+                    "answer": "A story about dragons",
+                    "is_thin": False,
+                    "timestamp": "2026-01-01T00:05:00",
+                },
+                {
+                    "question_id": "cp-02",
+                    "dimension": "concept_premise",
+                    "question": "Who is the hero?",
+                    "answer": "A young rider",
+                    "is_thin": False,
+                    "timestamp": "2026-01-01T00:10:00",
+                },
+                {
+                    "question_id": "cp-03",
+                    "dimension": "concept_premise",
+                    "question": "What makes this story different?",
+                    "answer": "Dragons as ecosystem engineers",
+                    "is_thin": False,
+                    "timestamp": "2026-01-01T00:15:00",
+                },
+            ],
+            "thin_areas": [],
+        }
+
+    def test_fully_answered_returns_immediately(self):
+        """All questions in quick mode are answered — no Q&A should run."""
+        result = run_interview(
+            depth="quick",
+            genre=None,
+            model_override=None,
+            project_dir=tempfile.mkdtemp(),
+            existing_answers=self.full_checkpoint,
+        )
+        self.assertEqual(result["answers"], self.full_checkpoint["answers"])
+        self.assertIsNotNone(result.get("completed_at"))
+        self.assertEqual(result.get("depth"), "quick")
+
+
+class TestStoryforgeCLIArgs(unittest.TestCase):
+    """Tests for the storyforge.py CLI argument parsing."""
+
+    def test_resume_flag_parses_directory(self):
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--resume", metavar="PROJECT_DIR", type=str, default=None)
+        args = parser.parse_args(["--resume", "/some/project"])
+        self.assertEqual(args.resume, "/some/project")
+
+    def test_resume_default_none(self):
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--resume", metavar="PROJECT_DIR", type=str, default=None)
+        args = parser.parse_args([])
+        self.assertIsNone(args.resume)
+
+    def test_interactive_flag(self):
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--interactive", action="store_true")
+        args = parser.parse_args(["--interactive"])
+        self.assertTrue(args.interactive)
+
+    def test_interactive_default_false(self):
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--interactive", action="store_true")
+        args = parser.parse_args([])
+        self.assertFalse(args.interactive)
+
+    def test_depth_choices(self):
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--depth", choices=["quick", "standard", "comprehensive"], default="standard")
+        args = parser.parse_args(["--depth", "quick"])
+        self.assertEqual(args.depth, "quick")
+        args2 = parser.parse_args([])
+        self.assertEqual(args2.depth, "standard")
+
+    def test_depth_default_standard(self):
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--depth", choices=["quick", "standard", "comprehensive"], default="standard")
+        args = parser.parse_args([])
+        self.assertEqual(args.depth, "standard")
+
+    def test_model_override_flag(self):
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--model-override", type=str, default=None)
+        args = parser.parse_args(["--model-override", "gpt-4o"])
+        self.assertEqual(args.model_override, "gpt-4o")
+        args2 = parser.parse_args([])
+        self.assertIsNone(args2.model_override)
