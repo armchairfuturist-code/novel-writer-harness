@@ -1,9 +1,12 @@
 """StoryForge configuration — crofai model routing, scoring thresholds, API config.
 
-Model routing strategy:
+Model routing strategy (updated 2026-05):
 - Kimi K2.6 and K2.6 Precision (prose-optimized): chapter drafting, prose generation
-- DeepSeek V4 Pro Precision (large context window): worldbuilding, planning, long-context tasks
-- GLM 4.7 Flash (cheap/fast): scoring, mechanical checks, quick iterations
+- DeepSeek V4 Pro Precision (large context window): worldbuilding, planning, long-context
+- DeepSeek V4 Flash (reasoning + cheap): thin-area detection, quick reasoning tasks
+- Qwen3.5 9B (fast/cheap): scoring, mechanical checks, quick iterations
+- Qwen3.6 27B (mid-tier reasoning): upgrade path for scoring/reasoning tasks
+- GLM 5.1 (reasoning, high speed): mid-tier general tasks
 
 Usage:
     from config import Config
@@ -85,9 +88,15 @@ class Config:
             "kimi-balanced": ModelConfig(name="kimi-k2.6-precision"),
             "kimi-precision": ModelConfig(name="kimi-k2.6-precision"),
             # DeepSeek — large context window
-            "deepseek": ModelConfig(name="deepseek-v4-pro-precision", temperature=0.7),
-            # GLM 4.7 Flash — cheap/fast for scoring
+            "deepseek": ModelConfig(name="deepseek-v4-pro-precision", temperature=0.7, max_tokens=16384),
+            # DeepSeek V4 Flash — reasoning + cheap, good for thin-area detection
+            "deepseek-flash": ModelConfig(name="deepseek-v4-flash", temperature=0.3, max_tokens=8192),
+            # GLM 5.1 — reasoning-enabled, high speed, mid-tier general
+            "glm": ModelConfig(name="glm-5.1", temperature=0.7, max_tokens=8192),
+            # Qwen3.5 9B — fast/cheap for scoring
             "flash": ModelConfig(name="qwen3.5-9b", temperature=0.3, max_tokens=4096),
+            # Qwen3.6 27B — mid-tier reasoning upgrade
+            "qwen-mid": ModelConfig(name="qwen3.6-27b", temperature=0.5, max_tokens=8192),
         }
 
         # --- Phase-to-Model Routing ---
@@ -96,7 +105,7 @@ class Config:
             "seed": "deepseek",              # Planning — needs context
             "worldbuilding": "deepseek",      # Expansive world building — needs context
             "characters": "kimi-balanced",    # Character depth — prose matters
-            "outline": "deepseek",            # Structural planning — needs context
+            "outline": "kimi-balanced",        # Structural planning — faster generation
             "draft": "kimi-precision",        # Actual chapter writing — prose quality matters most
             "scoring": "flash",               # Mechanical checks — cheap and fast
             "critique": "kimi-precision",     # Deep literary critique — prose-aware
@@ -108,7 +117,7 @@ class Config:
         # --- Interview Task-to-Model Routing ---
         # Each interview dimension picks the best model based on lechmazur/writing
         # benchmark rankings: DeepSeek for context-heavy Q&A, Kimi K2.6 for
-        # prose/literary comparisons, GLM Flash for scoring/detection/quick turns.
+        # prose/literary comparisons, Qwen3.5 9B for scoring/detection/quick turns.
         self.interview_models = {
             "concept_premise": "deepseek",      # Broad creative context
             "world_setting": "deepseek",         # Expansive world details
@@ -124,6 +133,9 @@ class Config:
         self.benchmark_models = {
             "kimi-k2.6": ModelConfig(name="kimi-k2.6"),
             "kimi-k2.6-precision": ModelConfig(name="kimi-k2.6-precision"),
+            "deepseek-v4-flash": ModelConfig(name="deepseek-v4-flash"),
+            "glm-5.1": ModelConfig(name="glm-5.1"),
+            "qwen3.6-27b": ModelConfig(name="qwen3.6-27b"),
         }
 
         # --- Scoring ---

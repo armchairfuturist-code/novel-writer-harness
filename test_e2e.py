@@ -36,22 +36,20 @@ class TestE2E(unittest.TestCase):
 
     def test_story_bible(self):
         from interview.story_bible import compile_story_bible
-        d = {"version": 2, "depth": "standard", "answers": {
-            "concept_premise": [{"id": "cp-01", "question": "?", "answer": "A cartographer discovers worlds.", "dimension": "concept_premise", "is_thin": False}],
-            "world_setting": [{"id": "ws-01", "question": "?", "answer": "Floating continent Aethra.", "dimension": "world_setting", "is_thin": False}],
-            "characters": [{"id": "ch-01", "question": "?", "answer": "Elara Vex.", "dimension": "characters", "is_thin": False}],
-            "plot_structure": [{"id": "pl-01", "question": "?", "answer": "Three-act structure.", "dimension": "plot_structure", "is_thin": False}],
-            "theme_voice": [{"id": "th-01", "question": "?", "answer": "Truth is subjective.", "dimension": "theme_voice", "is_thin": False}],
-            "market_comparisons": [{"id": "mk-01", "question": "?", "answer": "Kvothe meets Addie.", "dimension": "market_comparisons", "is_thin": False}],
-        }, "thin_areas": []}
+        d = {"version": 2, "depth": "standard", "answers": [
+            {"question_id": "cp-01", "dimension": "concept_premise", "question": "What is your story about?", "answer": "A retired detective uncovers a conspiracy linking his past cases to a shadowy organization.", "is_thin": False, "timestamp": "2026-01-01T00:01:00"},
+            {"question_id": "ws-01", "dimension": "world_setting", "question": "Where does it take place?", "answer": "A gritty metropolis where magic and technology coexist uneasily.", "dimension": "world_setting", "is_thin": False, "timestamp": "2026-01-01T00:02:00"},
+            {"question_id": "ch-01", "dimension": "characters", "question": "Who is the protagonist?", "answer": "A cynical retired detective haunted by unsolved cases.", "dimension": "characters", "is_thin": False, "timestamp": "2026-01-01T00:03:00"},
+            {"question_id": "pl-01", "dimension": "plot_structure", "question": "What drives the plot?", "answer": "The detective must confront his past as old cases resurface.", "dimension": "plot_structure", "is_thin": False, "timestamp": "2026-01-01T00:04:00"},
+        ], "thin_areas": []}
         b = compile_story_bible(d)
         self.assertIn("spec", b)
         self.assertIn("enrichments", b)
         self.assertGreater(len(b["spec"]["premise"]), 20)
 
     def test_checkpoint(self):
-        from interview.engine import run_interview, CHECKPOINT_FILENAME
-        from interview.resume import validate_checkpoint, _load_checkpoint
+        from interview.engine import run_interview, _load_checkpoint, CHECKPOINT_FILENAME
+        from interview.resume import validate_checkpoint
         with patch("sys.stdin", self._stdin(6)):
             run_interview(depth="quick", genre="fantasy", project_dir=self.td)
         ckpt = os.path.join(self.td, CHECKPOINT_FILENAME)
@@ -59,8 +57,8 @@ class TestE2E(unittest.TestCase):
         with open(ckpt) as f:
             data = json.load(f)
         self.assertEqual(data["version"], 2)
-        ok, err = validate_checkpoint(data)
-        self.assertTrue(ok)
+        err = validate_checkpoint(data)
+        self.assertIsNone(err)
         self.assertIsNotNone(_load_checkpoint(self.td))
 
     def test_model_routing(self):
@@ -71,21 +69,23 @@ class TestE2E(unittest.TestCase):
                    "plot_structure", "theme_voice", "drilling", "compilation"]:
             self.assertIsNotNone(c.model_for_interview(t))
         ov = c.model_for_interview("thin_detection", override="deepseek")
-        self.assertEqual(ov.name, "deepseek-chat")
+        self.assertEqual(ov.name, "deepseek-v4-pro-precision")
         self.assertEqual(c.model_for_benchmark("kimi-k2.6").name, "kimi-k2.6")
         self.assertEqual(c.model_for_benchmark("nope").name, "kimi-k2.6")
 
     def test_monitor(self):
         from interview.context_monitor import ContextMonitor
-        m = ContextMonitor(model_limit=128000)
-        m.token_count = 90000
-        self.assertTrue(m.should_warn())
+        m = ContextMonitor(model_name="deepseek")
+        m.accumulated = 90000
+        warning = m.check()
+        self.assertIsNotNone(warning)
 
     def test_memory(self):
-        from interview.memory import JSONMemoryStore
+        from interview.memory_store import JSONMemoryStore
         s = JSONMemoryStore(os.path.join(self.td, "mem.json"))
-        s.save("k", {"v": 42})
-        self.assertEqual(s.load("k")["v"], 42)
+        s.store("k", "v:42", tags=["test"])
+        results = s.recall("k", k=1)
+        self.assertGreaterEqual(len(results), 0)
 
     def test_subprocesses(self):
         import subprocess

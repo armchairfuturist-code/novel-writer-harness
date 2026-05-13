@@ -151,22 +151,22 @@ class TestRevisionPrompt(unittest.TestCase):
             "pacing_variance": 2.0,
             "total_score": 4.5,
         }
-        prompt = _generate_revision_prompt(text, score, "lyrical")
+        prompt = _generate_revision_prompt(text, score, "lyrical", Config())
         self.assertIn("suddenly", prompt)
         self.assertIn("very", prompt)
         self.assertIn("lyrical", prompt)
 
     def test_no_prompt_for_good_chapter(self):
-        # Need enough words to not trigger "chapter is short" check (< 2000)
-        text = "The rain hammered the tin roof. " * 300  # ~2100 words
+        # Need enough words to not trigger "chapter is short" check (< 75% of 4000 = 3000)
+        text = "The rain hammered the tin roof. " * 500  # ~3500 words
         score = {
-            "word_count": 2100,
+            "word_count": 3500,
             "banned_words_found": {},
             "tell_ratio": 0.1,
             "pacing_variance": 8.0,
             "total_score": 8.0,
         }
-        prompt = _generate_revision_prompt(text, score, "default")
+        prompt = _generate_revision_prompt(text, score, "default", Config())
         self.assertEqual(prompt, "")
 
 
@@ -218,7 +218,7 @@ class TestConfig(unittest.TestCase):
         model = c.model_for_interview("characters")
         self.assertEqual(model.name, "kimi-k2.6-precision")
         model = c.model_for_interview("drilling")
-        self.assertEqual(model.name, "glm-4.7-flash")
+        self.assertEqual(model.name, "qwen3.5-9b")
 
     def test_model_for_interview_fallback(self):
         """Unknown interview task falls back to 'kimi-balanced'."""
@@ -234,13 +234,13 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(model.name, "deepseek-v4-pro-precision")
         # Override to flash for a context-heavy task
         model = c.model_for_interview("world_setting", override="flash")
-        self.assertEqual(model.name, "glm-4.7-flash")
+        self.assertEqual(model.name, "qwen3.5-9b")
 
     def test_model_for_interview_invalid_override(self):
         """Invalid override key is ignored — uses routed model instead."""
         c = Config()
         model = c.model_for_interview("drilling", override="nonexistent-alias")
-        self.assertEqual(model.name, "glm-4.7-flash")
+        self.assertEqual(model.name, "qwen3.5-9b")
 
     def test_interview_models_has_all_dimensions(self):
         """All interview dimensions have a routing entry."""

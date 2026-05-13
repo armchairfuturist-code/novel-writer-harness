@@ -62,6 +62,109 @@ def _unwrap_json(text: str) -> str:
     return text
 
 
+def _repair_json(text: str) -> str:
+    """Attempt to repair common JSON model output issues.
+
+    Handles:
+    1. Literal newlines inside string values (escape them)
+    2. Bare parenthetical annotations like 'age: 10 (child) / 26 (adult)'
+    """
+    import re
+
+    # 1. Escape literal newlines inside JSON strings.
+    result = []
+    in_string = False
+    escape = False
+    for ch in text:
+        if escape:
+            escape = False
+            result.append(ch)
+            continue
+        if ch == chr(92):
+            escape = True
+            result.append(ch)
+            continue
+        if ch == chr(34):
+            in_string = not in_string
+            result.append(ch)
+            continue
+        if ch == chr(10) and in_string:
+            result.append(chr(92) + 'n')
+            continue
+        result.append(ch)
+    text = ''.join(result)
+
+    # 2. Fix bare unquoted values with parenthetical annotations on their own lines.
+    #    Only apply to lines that are unparseable by normal JSON.
+    #    First try parsing the cleaned text.
+    try:
+        import json as _json
+        _json.loads(text)
+        return text  # Already valid after step 1
+    except _json.JSONDecodeError:
+        pass
+
+    # 3. Line-level repair for unquoted annotations.
+    #    Only wrap the value up to the next comma or close-bracket.
+    import re as _re3
+    lines = text.split(chr(10))
+    fixed_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        # Skip structural lines
+        if stripped in ('{', '}', '[', ']', '', ',') or stripped.startswith('//'):
+            fixed_lines.append(line)
+            continue
+        # Match 'key': bare_value_pattern up to comma or end
+        m = _re3.match(r'^([^:]+):\s*(\d[^,}]*?)([,}])(.*)$', stripped)
+        if m:
+            key_part = m.group(1)
+            bare_val = m.group(2).rstrip()
+            closer = m.group(3)
+            rest = m.group(4)
+            # Check for parenthetical or annotated values
+            if (chr(40) in bare_val or chr(47) in bare_val) and _re3.search(r'[0-9]', bare_val):
+                indent = line[:len(line) - len(line.lstrip())]
+                comma = chr(44) if closer == chr(44) else ''
+                new_line = indent + key_part + chr(58) + chr(32) + chr(34) + bare_val + chr(34) + closer + rest
+                fixed_lines.append(new_line)
+                continue
+        fixed_lines.append(line)
+
+    # 4. Final fallback: brace-counting extraction as dict
+    extracted = _extract_json(text)
+    if extracted is not None:
+        return json.dumps(extracted)
+    return chr(10).join(fixed_lines)
+
+def _extract_json(text: str) -> dict:
+    """Extract the outermost JSON object from text, handling common issues."""
+    import re as _re
+    
+    # Remove trailing commas before ] or }
+    text = _re.sub(r',\s*(?=[}\]])', '', text)
+    
+    # Find outermost { ... } via brace counting  
+    depth = 0
+    start = -1
+    for i, ch in enumerate(text):
+        if ch == chr(123):
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == chr(125):
+            depth -= 1
+            if depth == 0 and start >= 0:
+                candidate = text[start:i+1]
+                try:
+                    import json as _json
+                    return _json.loads(candidate)
+                except _json.JSONDecodeError:
+                    pass
+    return None
+
+
 def parse_json_output(content: str, label: str = "response") -> dict:
     """Parse a model's JSON output, handling markdown wrapping and errors.
 
@@ -87,6 +190,15 @@ def parse_json_output(content: str, label: str = "response") -> dict:
                 return json.loads(content[start:end+1])
             except json.JSONDecodeError:
                 pass
+        # Try repair before giving up
+        repaired = _repair_json(content)
+        try:
+            return json.loads(repaired)
+        except json.JSONDecodeError:
+            # Brace-counting extraction as final attempt
+            extracted = _extract_json(repaired)
+            if extracted is not None:
+                return extracted
         raise RuntimeError(
             f"Failed to parse {label} as JSON. "
             f"Response preview: {content[:300]}"
@@ -108,7 +220,7 @@ class CrofaiClient:
 
     def __init__(self, config: Optional[Config] = None, use_cache: bool = False):
         self.config = config or Config()
-        self._http = httpx.Client(timeout=300.0)
+        self._http = httpx.Client(timeout=600.0)
         self.use_cache = use_cache
 
     def __enter__(self):
@@ -194,7 +306,7 @@ class CrofaiClient:
         model: ModelConfig,
         messages: list[dict],
         system_prompt: Optional[str] = None,
-        max_retries: int = 2,
+        max_retries: int = 3,
         **kwargs,
     ) -> str:
         """Chat completion with smart retry.
@@ -226,7 +338,7 @@ class CrofaiClient:
                     raise
 
                 if attempt < max_retries:
-                    delay = 2 ** attempt
+                    delay = 2 ** (attempt + 3)
                     time.sleep(delay)
 
         raise RuntimeError(f"All {max_retries + 1} attempts failed: {last_error}")

@@ -75,6 +75,34 @@ Give it a seed concept and it will:
 
 ---
 
+## v0.3.1: Quality Guardrails
+
+Fixes that caught continuity errors in a 25-chapter test run and prevent them in future novels.
+
+### Per-occurrence banned word penalty
+
+The mechanical scorer previously counted *unique banned word types* (e.g., 106 instances of "very" = 1 type = -0.5 pts, easily ignored). It now counts **total occurrences** (106 * -0.5 = -5.0, capped). Chapters with heavy banned-word usage now reliably trigger the revision loop.
+
+### Word count enforcement
+
+The scorer now penalizes chapters below 60% of the config target (default: 4,000 words). Combined with the per-occurrence penalty, revision prompts now include specific word-expansion instructions when a chapter is too short.
+
+### Character cast enforcement in drafts
+
+The draft prompt now includes a `{character_cast}` section populated from `characters.json`, with the explicit instruction: "Character cast (only these characters exist in this story; do not invent new ones)." This prevents the LLM from introducing unregistered characters that contradict established profiles.
+
+### Backstory consistency scan
+
+A new fact-check scanner (`scan_backstory_consistency`) detects origin/backstory contradictions across chapters -- birthplace, refugee origin, "grew up in" city, etc. These are flagged at FAIL severity so they cannot be ignored.
+
+### Character registry validation in outlines
+
+After outline generation, every chapter POV and key-event reference is checked against the character registry. Unregistered characters generate a warning before drafting begins.
+
+### Updated model routing
+
+New model aliases added to `config.py`: `deepseek-v4-flash` (cheap reasoning, 1M context), `glm-5.1` (mid-tier reasoning, 169 t/s), and `qwen3.6-27b` (mid-tier reasoning upgrade). All existing routing unchanged -- new aliases available via `model_override`.
+
 ## v0.3: What's New
 
 ### Hindsight canonical state store
