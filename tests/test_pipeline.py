@@ -151,22 +151,22 @@ class TestRevisionPrompt(unittest.TestCase):
             "pacing_variance": 2.0,
             "total_score": 4.5,
         }
-        prompt = _generate_revision_prompt(text, score, "lyrical")
+        prompt = _generate_revision_prompt(text, score, "lyrical", Config())
         self.assertIn("suddenly", prompt)
         self.assertIn("very", prompt)
         self.assertIn("lyrical", prompt)
 
     def test_no_prompt_for_good_chapter(self):
-        # Need enough words to not trigger "chapter is short" check (< 2000)
-        text = "The rain hammered the tin roof. " * 300  # ~2100 words
+        # Need enough words to not trigger "chapter is short" check (< 75% of 4000 = 3000)
+        text = "The rain hammered the tin roof. " * 500  # ~3500 words
         score = {
-            "word_count": 2100,
+            "word_count": 3500,
             "banned_words_found": {},
             "tell_ratio": 0.1,
             "pacing_variance": 8.0,
             "total_score": 8.0,
         }
-        prompt = _generate_revision_prompt(text, score, "default")
+        prompt = _generate_revision_prompt(text, score, "default", Config())
         self.assertEqual(prompt, "")
 
 

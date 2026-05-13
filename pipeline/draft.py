@@ -97,6 +97,9 @@ World context / setting: {world_context}
 
 {hindsight_canonical_state}
 
+Character cast (only these characters exist in this story; do not invent new ones):
+{character_cast}
+
 Relevant context from earlier chapters (retrieved by relevance):
 {retrieved_context}
 
@@ -268,7 +271,10 @@ class ChapterScorer:
             if count > 0:
                 banned_found[word] = count
 
-        banned_penalty = len(banned_found) * self.config.scoring.banned_word_penalty
+        # Penalize per occurrence (not per unique word type) so 20 "very" instances
+        # actually trigger the revision loop. Cap at -5.0 to avoid total score collapse.
+        total_banned_occurrences = sum(banned_found.values())
+        banned_penalty = total_banned_occurrences * self.config.scoring.banned_word_penalty
         banned_penalty = max(banned_penalty, -5.0)
 
         tell_patterns = [
@@ -297,6 +303,14 @@ class ChapterScorer:
         if tell_ratio > self.config.scoring.show_dont_tell_threshold:
             base_score -= (tell_ratio - self.config.scoring.show_dont_tell_threshold) * 3
         base_score += pacing_score * 0.5
+
+        # Word count penalty: chapters significantly below target get dinged
+        target_wc = self.config.chapter.target_words_per_chapter
+        if word_count < target_wc * 0.6:
+            # Below 60% of target: -0.5 per 1000 words under
+            shortfall = (target_wc - word_count) / 1000
+            base_score -= min(shortfall * 0.5, 2.0)
+
         base_score = max(0, min(10, base_score))
 
         return {
@@ -333,10 +347,24 @@ def _draft_single_variant(
     config: Config,
     scorer: ChapterScorer,
     chapter_spec: dict,
+    characters: dict = None,
     hindsight_context: str = "",
     compressed_context: str = "",
 ) -> dict:
     """Draft a single variant of a chapter and score it."""
+        # Build character cast list from characters dict
+    cast_lines = []
+    if characters:
+        char_list = characters.get("characters", characters.get("raw_characters", []))
+        if isinstance(char_list, list):
+            for c in char_list:
+                name = c.get("name", "?")
+                role = c.get("role", "?")
+                bg = c.get("background", "")[:120]
+                arc = c.get("arc", "")
+                cast_lines.append(f"- {name} ({role}): {bg} | Arc: {arc}")
+    character_cast = "\n".join(cast_lines) if cast_lines else "See character profiles above."
+
     prompt = CHAPTER_DRAFT_TEMPLATE.format(
         chapter_number=chapter_num,
         chapter_title=chapter_title,
@@ -352,6 +380,7 @@ def _draft_single_variant(
         compressed_narrative_context=compressed_context or "[No compressed context available]",
         active_threads="\n".join(active_threads[-5:]) if active_threads else "None yet.",
         style_direction=style_direction,
+        character_cast=character_cast,
     )
 
     content = client.chat_with_retry(
@@ -378,6 +407,7 @@ def _generate_revision_prompt(
     chapter_text: str,
     mechanical_score: dict,
     style_name: str,
+    config: Config,
 ) -> str:
     """Generate a revision prompt from mechanical score weaknesses."""
     issues = []
@@ -404,10 +434,11 @@ def _generate_revision_prompt(
             f"Vary sentence lengths more for rhythm. Mix short punchy sentences with longer flowing ones."
         )
 
-    # Word count
-    if mechanical_score["word_count"] < 2000:
+    # Word count — enforce config target (default 4000)
+    target = config.chapter.target_words_per_chapter
+    if mechanical_score["word_count"] < target * 0.75:
         issues.append(
-            f"- Chapter is short ({mechanical_score['word_count']} words). "
+            f"- Chapter is short ({mechanical_score['word_count']} words, target {target}). "
             f"Expand scenes with more sensory detail, interiority, and action."
         )
 
@@ -454,7 +485,7 @@ def _run_revision_loop(
             break
 
         revision_prompt = _generate_revision_prompt(
-            current_text, current_score, style_name
+            current_text, current_score, style_name, config
         )
         if not revision_prompt:
             break
@@ -670,6 +701,7 @@ def run_draft(
                     config=config,
                     scorer=scorer,
                     chapter_spec=chapter_spec,
+                    characters=characters,
                     hindsight_context=hindsight_context,
                     compressed_context=compressed_context,
                 )
@@ -750,6 +782,7 @@ def run_draft(
                 config=config,
                 scorer=scorer,
                 chapter_spec=chapter_spec,
+                characters=characters,
             )
             best_content = variant_result["content"]
             best_score = scorer.score_chapter(best_content)

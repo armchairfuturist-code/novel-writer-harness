@@ -253,4 +253,32 @@ def run_outline(spec: dict, world: dict, characters: dict, structure: str = "thr
         outline = _generate_fallback_outline(spec, characters, target_chapters)
 
     client.close()
+
+    # Validate: check that all named characters in the outline exist in the registry
+    if isinstance(characters, dict):
+        registered_names = set()
+        for c in characters.get("characters", characters.get("raw_characters", [])):
+            registered_names.add(c.get("name", "").lower().strip())
+        registered_names.discard("")
+
+        for act in outline.get("acts", []):
+            for ch in act.get("chapters", []):
+                pov = ch.get("pov", "")
+                if pov and pov.lower().strip() not in registered_names:
+                    tag = ch.get('chapter', '?')
+                    print(f"  [WARN] Chapter {tag}: POV character '{pov}' is not in the character registry. "
+                          f"Add it to characters.json or change the POV assignment.")
+                # Check key_events for character references
+                events = ch.get("key_events", [])
+                if isinstance(events, list):
+                    for event in events:
+                        event_lower = event.lower()
+                        import re
+                        # Find capitalized multi-word phrases that look like character names
+                        for match in re.finditer(r'[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*', event):  # noqa: W605
+                            name = match.group(0).lower()
+                            if len(name) > 2 and name not in ('The', 'A', 'An', 'This', 'That', 'It', 'I', 'You', 'He', 'She', 'We', 'They', 'Chapter', 'We Need', 'Act'):
+                                if name not in registered_names:
+                                    print(f"  [WARN] Chapter {ch.get('chapter', '?')}: character '{match.group(0)}' may be an unregistered character. Add to characters.json.")
+
     return outline

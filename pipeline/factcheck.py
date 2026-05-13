@@ -262,6 +262,94 @@ def scan_foreshadowing_payoff(chapters_dir: str) -> list[dict]:
     return issues
 
 
+
+def scan_backstory_consistency(chapters_dir: str, characters: dict = None) -> list[dict]:
+    """Scan for character origin/backstory contradictions across chapters.
+
+    Detects cases where a character's origins, birthplace, or personal history
+    contradicts between chapters. E.g., "born in Angola" vs "fled the US".
+    """
+    issues = []
+    chapter_files = sorted(f for f in os.listdir(chapters_dir) if f.endswith(".md"))
+
+    # Patterns that signal origin/backstory assertions
+    origin_patterns = [
+        r'(?:was\s+)?born\s+(?:in|on|into)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)',
+        r'(?:refugee|fled|escaped)\s+(?:from\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)',
+        r'(?:from|in)\s+(?:a\s+)?(?:small\s+|large\s+|mid-sized\s+)?(?:town|city|village|country|neighborhood)\s+(?:called\s+|named\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)',
+        r'(?:grew\s+up|raised|childhood)\s+(?:in|on)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)',
+        r'(?:American|Angolan|Brazilian|Portuguese|refugee)\s+(?:from\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)',
+    ]
+
+    # Track origin claims per character
+    # {lowercase_character_name: [(chapter, claim_text)]}
+    origin_claims: dict[str, list[tuple[int, str]]] = {}
+    # character_name_pattern unused; kept for future expansion
+
+    for fn in chapter_files:
+        ch_match = re.search(r'(\d+)', fn)
+        if not ch_match:
+            continue
+        ch_num = int(ch_match.group(1))
+        filepath = os.path.join(chapters_dir, fn)
+
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            continue
+
+        # Detect POV character from header
+        pov = ""
+        for line in text.split('\n')[:5]:
+            if "POV:" in line:
+                pov = line.split("POV:")[1].split("|")[0].strip()
+                break
+
+        if not pov:
+            continue
+
+        pov_lower = pov.lower().strip()
+
+        # Find origin assertions in this chapter's text
+        for pat in origin_patterns:
+            matches = re.findall(pat, text, re.IGNORECASE)
+            for m in matches:
+                if isinstance(m, tuple):
+                    claim = m[0].strip()
+                else:
+                    claim = m.strip()
+                if len(claim) > 2 and claim.lower() not in ('a', 'an', 'the', 'this', 'that', 'it', 'he', 'she', 'they'):
+                    if pov_lower not in origin_claims:
+                        origin_claims[pov_lower] = []
+                    origin_claims[pov_lower].append((ch_num, claim))
+
+    # Check for contradictions: same character, different origins
+    for char_name, claims in origin_claims.items():
+        if len(claims) < 2:
+            continue
+        unique_origins = set()
+        for ch_num, claim in claims:
+            unique_origins.add(claim.lower().strip())
+        if len(unique_origins) > 1:
+            chapters_involved = sorted(set(c[0] for c in claims))
+            issues.append({
+                "type": "backstory_contradiction",
+                "severity": "FAIL",
+                "detail": (
+                    f"Character '{char_name}' has conflicting origin claims across chapters: "
+                    + "; ".join(f"Ch {c[0]}: '{c[1]}'" for c in claims[:5])
+                ),
+                "chapter": chapters_involved[0],
+                "recommendation": (
+                    f"Unify {char_name}'s backstory. Claims appear in Ch "
+                    + ", ".join(str(c) for c in chapters_involved[:5])
+                    + ". Choose one canonical origin and fix the rest."
+                ),
+            })
+
+    return issues
+
 def run_fact_check(project_dir: str) -> dict:
     """Run all fact-checking scans and produce a report.
 
@@ -289,6 +377,9 @@ def run_fact_check(project_dir: str) -> dict:
 
     print("  Running foreshadowing/payoff scan...")
     all_issues.extend(scan_foreshadowing_payoff(chapters_dir))
+
+    print("  Running backstory consistency scan...")
+    all_issues.extend(scan_backstory_consistency(chapters_dir))
 
     # Grade the results
     errors = [i for i in all_issues if i["severity"] == "FAIL"]
