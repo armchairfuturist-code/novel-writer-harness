@@ -12,8 +12,8 @@
 | `python storyforge.py --interactive` | Guided Q&A before pipeline |
 | `python storyforge.py --interactive --depth comprehensive` | 73 questions, 6 dimensions |
 | `python storyforge.py --resume ~/path` | Resume interrupted interview |
-| `python storyforge.py "concept" --resume 7` | Resume drafting from ch 7 |
 | `python storyforge.py --quick "concept"` | Skip review, backprop, adversarial |
+| `python storyforge.py --genre fantasy "concept"` | Genre template (mystery, thriller, romance, fantasy, sci-fi) |
 | `python storyforge.py --benchmark` | Benchmark model variants |
 | `python storyforge.py --help` | All flags |
 
@@ -27,7 +27,7 @@ python -m pytest tests/ -v
 
 Single file: `python -m pytest tests/test_v03.py -v`. No coverage or tox config exists.
 
-`test_e2e.py` runs subprocess pytest on 4 test files as a smoke test. Quick interview tests mock stdin. All tests must pass without live API (`CrofaiClient` is never called in CI-unit-style tests).
+`test_e2e.py` runs subprocess pytest on 4 test files as a smoke test. Quick interview tests mock stdin. All tests pass without live API (CrofaiClient endpoints are mocked or never reached in unit tests).
 
 ## API and environment
 
@@ -41,14 +41,15 @@ Single file: `python -m pytest tests/test_v03.py -v`. No coverage or tox config 
 ## Architecture
 
 - Phase-to-model routing in `Config.phase_models` (config.py:104). Different phases use different crofai models (DeepSeek V4 Pro for planning, Kimi K2.6 Precision for drafting, Qwen for scoring).
-- `HindsightStore` (`pipeline/hindsight_client.py`) — structured memory server at `localhost:8888`. Disabled with `--no-gbrain`. Tests mock the HTTP calls; no live Hindsight needed.
+- `CanonicalStore` ABC (`pipeline/canonical_store.py`) — abstract interface for canonical novel state (character traits, world facts, plot threads, foreshadowing, chapter summaries). Default implementation is `FileCanonicalStore` (zero-dependency JSON file, word-overlap scoring for recall). Factory `create_canonical_store()` supports `file`, `hindsight`, `gbrain`, `auto` backends.
+- `HindsightStore` (`pipeline/hindsight_client.py`) / `GBrainStore` (`pipeline/gbrain_client.py`) — HTTP-backed canonical stores at `localhost:8888`. Not used by default; the pipeline creates `FileCanonicalStore` and injects it into `run_draft()`.
 - `ReIOCompressor` (`pipeline/reio_compression.py`) — context compression for long novels. Disabled with `--no-reio`.
 - Genre templates: JSON files in `templates/` (5 genres: mystery, thriller, romance, fantasy, sci-fi). Applied via `--genre` flag.
 - `pipeline/api.py:parse_json_output()` handles LLM JSON output with multiple repair strategies (unwrap fences, escape newlines, fix parenthetical annotations, brace-counting extraction). All LLM responses go through this.
 
 ## Project output
 
-Landing dir: `~/storyforge-projects/{slug}/`. Override with `--project-dir`. Contains `checkpoint.json` for resume, `chapters/` per chapter md, plus all phase artifacts (world.json, characters.json, outline.json, etc.).
+Landing dir: `~/storyforge-projects/{slug}/`. Override with `--project-dir`. Contains `checkpoint.json` for resume, `chapters/` per chapter md, `canonical_state.json` (canonical state store), plus all phase artifacts (world.json, characters.json, outline.json, etc.). The entire `storyforge-projects/` dir is gitignored.
 
 ## Key conventions
 

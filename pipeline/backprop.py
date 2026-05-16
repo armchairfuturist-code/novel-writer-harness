@@ -65,7 +65,7 @@ def scan_character_traits(chapters_dir: str) -> list[dict]:
         for pat, trait_type in all_pats:
             matches = re.findall(pat, text)
             for m in matches:
-                val = m if isinstance(m, str) else m[0]
+                val = m[0] if isinstance(m, tuple) else m
                 trait_history[trait_type][val].append(ch_num)
 
     # Detect contradictions: same trait type, different values, in close chapters

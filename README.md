@@ -44,7 +44,7 @@ python storyforge.py --resume ~/storyforge-projects/interview-my-idea/
 ### Write a novel
 
 ```bash
-python storyforge.py "A detective in a city where memories are currency solves a murder by accessing the victim's final memories, only to discover the killer is someone who erased themselves from everyone's mind."
+python storyforge.py "A detective in a city where memories are currency solves a murder by accessing the victim'\''s final memories, only to discover the killer is someone who erased themselves from everyone'\''s mind."
 ```
 
 That's it. Output lands at `~/storyforge-projects/{novel-title}/`. The pipeline takes anywhere from 15 minutes to a few hours depending on the model speed and chapter count.
@@ -105,11 +105,19 @@ New model aliases added to `config.py`: `deepseek-v4-flash` (cheap reasoning, 1M
 
 ## v0.3: What's New
 
-### Hindsight canonical state store
+### Pluggable canonical state store
 
 A structured memory system that tracks character traits, world facts, plot threads, and foreshadowing debts chapter by chapter. Before writing each chapter, the pipeline queries what it already knows. After writing, it pushes new state back. This prevents characters from changing eye color between chapters and plot threads from disappearing into the void.
 
-Think of it as a story bible that writes itself as the novel progresses. No configuration needed -- it connects to Hindsight at localhost:8888 and creates a project-specific bank automatically.
+The store is defined as an abstract `CanonicalStore` interface in `pipeline/canonical_store.py`. The default implementation is `FileCanonicalStore` -- a zero-dependency, filesystem-backed store that persists to `canonical_state.json` in the project directory. It uses word-overlap scoring for relevance-ranked recall, so queries like "what does Maria look like?" return matching entries ranked by token overlap.
+
+```python
+# The factory creates any registered backend:
+from pipeline.canonical_store import create_canonical_store
+store = create_canonical_store("file", project_dir="/tmp/my-novel")
+```
+
+Available backends: `file` (default, zero dependencies), `hindsight` (HTTP-backed), `gbrain` (HTTP-backed), and `auto` (probes HTTP backends, falls back to file). Anyone can implement the `CanonicalStore` ABC and register it in the factory -- no pipeline changes needed.
 
 ### 4 rhetorical strategies (Postwriter-inspired)
 
@@ -188,7 +196,7 @@ For reference, the earlier release:
 | Backward propagation | Built-in (no API call) | Pattern matching -- detects contradictions without LLM |
 | Adversarial editing | Kimi K2.6 Precision | Identifies and classifies cuts per chapter |
 | Literary critique | Kimi K2.6 | Dual-persona review (Critic + Professor) |
-| Hindsight state | Built-in (no API call) | Structured memory queries -- no LLM tokens |
+| Canonical state store | Built-in (no API call) | Word-overlap scoring on local JSON file -- no LLM tokens |
 
 Configured for the crofai API (ai.nahcrof.com/v1). Change any model in `config.py`.
 
@@ -207,7 +215,6 @@ Configured for the crofai API (ai.nahcrof.com/v1). Change any model in `config.p
 | `python storyforge.py --no-backprop "concept"` | Skip backward propagation scan |
 | `python storyforge.py --no-adversarial "concept"` | Skip adversarial editing pass |
 | `python storyforge.py --no-iterative-backprop "concept"` | Use one-shot backprop instead of iterative |
-| `python storyforge.py --no-hindsight "concept"` | Disable canonical state store |
 | `python storyforge.py --no-reio "concept"` | Disable ReIO context compression |
 | `python storyforge.py --benchmark` | Benchmark model variants on prose quality |
 | `python storyforge.py --project-dir /path "concept"` | Override output directory |
@@ -227,6 +234,7 @@ Configured for the crofai API (ai.nahcrof.com/v1). Change any model in `config.p
   world.json                 # World bible
   characters.json            # Character profiles
   outline.json               # Chapter-by-chapter outline
+  canonical_state.json       # Canonical state store (character traits, world facts, threads, foreshadowing)
   chapters/
     chapter-001.md           # Each chapter (with variant, revision metadata)
     chapter-002.md
@@ -293,16 +301,48 @@ The iterative version runs up to 3 passes. If round 1 finds issues and generates
 
 ---
 
-## How Hindsight canonical state works
+## How the canonical state store works
 
-The HindsightStore connects to a structured memory server at localhost:8888. It creates a project-specific bank (e.g., `storyforge-the-great-novel`) and:
+The canonical state store is a structured memory that tracks everything the novel knows about itself. It is defined by the `CanonicalStore` abstract interface (`pipeline/canonical_store.py`) and comes with a zero-dependency default implementation that persists to a local JSON file.
 
-1. **Before each chapter draft**: queries for character traits, world facts, active plot threads, and foreshadowing elements relevant to the current chapter
-2. **Formats results** into a prompt section the model can use during drafting
-3. **After each chapter**: stores new character traits, world facts, thread progress, foreshadowing obligations, and contradictions detected
-4. **Provides critical state** to the ReIO compressor so compressed context still includes durable facts
+### What it tracks
 
-The result: the model knows what it established in chapter 3 while writing chapter 14. No drift, no forgotten subplots.
+| Fact type | Example | Tagged with |
+|---|---|---|
+| Character traits | "Maria has blue eyes (established Ch 1)" | `character_trait`, `eye_color`, `maria` |
+| World facts | "The city of Aethra floats on a geothermal vent" | `world_fact`, `aethra` |
+| Plot threads | "The conspiracy: active and unresolved" | `plot_thread`, `active` |
+| Foreshadowing | "The locket in Ch 3 (expected payoff ~Ch 15)" | `foreshadowing`, `unpaid` |
+| Chapter summaries | "Ch 5 (The Interrogation): Maria confronts the suspect..." | `chapter_summary`, `ch5` |
+
+### How it works at each chapter
+
+1. **Before drafting**: the pipeline queries the store for character traits, world facts, active plot threads, foreshadowing obligations, and recent chapter summaries relevant to the current chapter
+2. **Formats results** into a `[CANONICAL STATE]` block injected into the LLM prompt
+3. **After drafting**: the pipeline pushes new character traits, world facts, thread status, and foreshadowing plants discovered in this chapter back into the store
+4. **Passes critical state** to the ReIO compressor so compressed context always includes durable facts
+
+### Choosing a backend
+
+The store is pluggable via the `create_canonical_store()` factory:
+
+```python
+# Default (zero dependencies) -- persists to canonical_state.json:
+store = create_canonical_store("file", project_dir="/tmp/my-novel")
+
+# HTTP-backed stores -- connect to external memory services:
+store = create_canonical_store("hindsight", project_dir="/tmp/my-novel")
+store = create_canonical_store("gbrain", project_dir="/tmp/my-novel")
+
+# Auto-detect -- try HTTP backends, fall back to file:
+store = create_canonical_store("auto", project_dir="/tmp/my-novel")
+```
+
+The factory is used automatically by the pipeline. To implement a custom backend, subclass `CanonicalStore` and register it in the factory. No changes to the drafting pipeline are needed.
+
+### Why it matters
+
+The model knows what it established in chapter 3 while writing chapter 14. No eye-color drift. No forgotten subplots. No characters invented out of nowhere. The store's recall uses word-overlap scoring against the query, so it returns the most relevant entries -- not just the most recent ones.
 
 ---
 
@@ -342,7 +382,7 @@ pip install pytest
 pytest tests/ -v
 ```
 
-105 tests covering (86 existing + 19 new interview tests): scoring mechanics, BM25 retrieval, revision prompt generation, backpropagation (character traits, timeline, plot threads, foreshadowing), adversarial editing (mechanical tighten, cut categories, cut patterns), hindsight client (HTTP mocking, bank management, recall, contradiction scanning), ReIO compression (compression tiers, arc summaries, empty state, token estimation), iterative backprop (convergence, iteration tracking, skipped state), genre templates (all 5 genres, beat lookup, required elements, tracking items, critical items), and rhetorical strategies (4 profiles with labeled strategies and pacing directives).
+Tests covering: scoring mechanics, BM25 retrieval, revision prompt generation, backpropagation (character traits, timeline, plot threads, foreshadowing), adversarial editing (mechanical tighten, cut categories, cut patterns), canonical store (file-backed store, word-overlap scoring, factory, ABC contract, persistence, recall with tag filtering), ReIO compression (compression tiers, arc summaries, empty state, token estimation), iterative backprop (convergence, iteration tracking, skipped state), genre templates (all 5 genres, beat lookup, required elements, tracking items, critical items), rhetorical strategies (4 profiles with labeled strategies and pacing directives), interview engine (quick/standard/comprehensive depths, checkpoint resume, thin-area detection, drilling, story bible compilation), and CLI argument parsing.
 
 ---
 
@@ -361,8 +401,8 @@ Everything in `config.py`. You can change:
 - Output directory
 - API endpoint (point at any OpenAI-compatible API)
 - Token cost estimates per input/output token
-- Hindsight host and port
 - ReIO compression budget and fidelity tiers
+- Canonical store backend selection (via `create_canonical_store()` in `storyforge.py`)
 
 ---
 

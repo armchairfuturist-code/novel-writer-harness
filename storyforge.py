@@ -50,6 +50,7 @@ from interview.chapter_feedback import get_user_feedback
 # Interview (S02+)
 from interview.resume import validate_checkpoint, recover_checkpoint, log_error
 from interview.engine import _load_checkpoint as _load_interview_checkpoint
+from pipeline.canonical_store import CanonicalStore, FileCanonicalStore, create_canonical_store
 from interview.memory_store import create_memory_store
 
 BANNER = """
@@ -104,7 +105,7 @@ def run_full_pipeline(
     enable_adversarial: bool = True,
     iterative_backprop: bool = True,
     genre: Optional[str] = None,
-    enable_gbrain: bool = True,
+    canonical_store: Optional[CanonicalStore] = None,
     enable_reio: bool = True,
     precompiled_spec: Optional[dict] = None,
     feedback_enabled: bool = True,
@@ -122,7 +123,7 @@ def run_full_pipeline(
         enable_adversarial: Run adversarial editing pass
         iterative_backprop: Use iterative backprop loop (convergence-based)
         genre: Genre template to use (mystery, thriller, romance, fantasy, sci-fi)
-        enable_gbrain: Enable GBrain canonical state store
+        canonical_store: Canonical store instance (default: FileCanonicalStore)
         enable_reio: Enable ReIO context compression
 
     Returns:
@@ -288,7 +289,7 @@ def run_full_pipeline(
         print(f"  Target: {chapter_count} chapters")
         print(f"  Parallel rhetorical variants: {parallel_variants}")
         print(f"  Revision loop: ENABLED (threshold: {config.scoring.min_chapter_score})")
-        print(f"  GBrain canonical state: {'ON' if enable_gbrain else 'OFF'}")
+        print(f"  Canonical store: {type(canonical_store).__name__ if canonical_store else 'FileCanonicalStore (default)'}")
         print(f"  ReIO compression: {'ON' if enable_reio else 'OFF'}")
         print()
         start = time.time()
@@ -296,7 +297,7 @@ def run_full_pipeline(
             spec, world, characters, outline, project_dir, config,
             resume_from=resume_from,
             parallel_variants=parallel_variants,
-            enable_gbrain=enable_gbrain,
+            canonical_store=canonical_store,
         )
         elapsed = time.time() - start
         total_words = sum(c.get("word_count", 0) for c in chapters)
@@ -343,7 +344,7 @@ def run_full_pipeline(
         print()
 
     # ── Fact-Check ──
-    if ("draft" in completed or "draft" in PHASES) and not quick:
+    if "draft" in completed and not quick:
         print("=== Fact-Check: Consistency Scan ===")
         fc_report = run_fact_check(project_dir)
         if fc_report["status"] == "SKIPPED":
@@ -713,7 +714,7 @@ def main():
                 enable_adversarial=not args.no_adversarial,
                 iterative_backprop=not args.no_iterative_backprop,
                 genre=args.genre,
-                enable_gbrain=not args.no_gbrain,
+                canonical_store=create_canonical_store('file', project_dir=project_dir),
                 enable_reio=not args.no_reio,
                 precompiled_spec=compiled_spec,
                 feedback_enabled=feedback_enabled if feedback_enabled is not None else True,
@@ -773,7 +774,7 @@ def main():
                 enable_adversarial=not args.no_adversarial,
                 iterative_backprop=not args.no_iterative_backprop,
                 genre=args.genre,
-                enable_gbrain=not args.no_gbrain,
+                canonical_store=create_canonical_store('file', project_dir=project_dir),
                 enable_reio=not args.no_reio,
                 precompiled_spec=compiled_spec,
                 feedback_enabled=feedback_enabled if feedback_enabled is not None else True,
@@ -797,7 +798,7 @@ def main():
         enable_adversarial=not args.no_adversarial,
         iterative_backprop=not args.no_iterative_backprop,
         genre=args.genre,
-        enable_gbrain=not args.no_gbrain,
+        canonical_store=create_canonical_store('file', project_dir=project_dir),
         enable_reio=not args.no_reio,
         feedback_enabled=feedback_enabled if feedback_enabled is not None else False,
     )

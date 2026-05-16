@@ -98,7 +98,7 @@ def scan_character_trait_drift(chapters_dir: str) -> list[dict]:
             matches = re.findall(pat, text_lower)
             for m in matches:
                 if isinstance(m, tuple):
-                    color_val = m[1] if len(m) > 1 else m[0]
+                    color_val = m[0] if isinstance(m, tuple) else m
                 else:
                     color_val = m
                 trait_key = trait
@@ -122,7 +122,7 @@ def scan_character_trait_drift(chapters_dir: str) -> list[dict]:
         for pat, trait in hair_patterns:
             matches = re.findall(pat, text_lower)
             for m in matches:
-                color_val = m if isinstance(m, str) else m[0]
+                color_val = m[0] if isinstance(m, tuple) else m
                 trait_key = trait
                 if trait_key not in known_traits:
                     known_traits[trait_key] = {}
@@ -223,7 +223,7 @@ def scan_foreshadowing_payoff(chapters_dir: str) -> list[dict]:
     # Collect unique objects/concepts introduced in each chapter
     chapter_objects: dict[int, set] = {}
     object_pattern = re.compile(
-        r'(?:a|an|the)\s+(\w+\s+)?(?:pocket\s+)?(?:watch|key|book|mirror|knife|locket|ring|box|letter|map|photo|diamond)',
+        r'(?:a|an|the)\s+(?:\w+\s+)?(?:pocket\s+)?(?:watch|key|book|mirror|knife|locket|ring|box|letter|map|photo|diamond)',
         re.IGNORECASE,
     )
 
@@ -237,7 +237,7 @@ def scan_foreshadowing_payoff(chapters_dir: str) -> list[dict]:
         except OSError:
             continue
 
-        objects = set(object_pattern.findall(text))
+        objects = {o for o in object_pattern.findall(text) if o.strip()}
         chapter_objects[ch_num] = objects
 
     # Check for objects that appear once and never again
@@ -315,10 +315,7 @@ def scan_backstory_consistency(chapters_dir: str, characters: dict = None) -> li
         for pat in origin_patterns:
             matches = re.findall(pat, text, re.IGNORECASE)
             for m in matches:
-                if isinstance(m, tuple):
-                    claim = m[0].strip()
-                else:
-                    claim = m.strip()
+                claim = m[0].strip() if isinstance(m, tuple) else m.strip()
                 if len(claim) > 2 and claim.lower() not in ('a', 'an', 'the', 'this', 'that', 'it', 'he', 'she', 'they'):
                     if pov_lower not in origin_claims:
                         origin_claims[pov_lower] = []

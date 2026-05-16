@@ -275,7 +275,7 @@ def run_outline(spec: dict, world: dict, characters: dict, structure: str = "thr
                         event_lower = event.lower()
                         import re
                         # Find capitalized multi-word phrases that look like character names
-                        for match in re.finditer(r'[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*', event):  # noqa: W605
+                        for match in re.finditer(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', event):
                             name = match.group(0).lower()
                             if len(name) > 2 and name not in ('The', 'A', 'An', 'This', 'That', 'It', 'I', 'You', 'He', 'She', 'We', 'They', 'Chapter', 'We Need', 'Act'):
                                 if name not in registered_names:

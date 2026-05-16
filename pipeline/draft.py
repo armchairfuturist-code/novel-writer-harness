@@ -17,7 +17,7 @@ from typing import Optional
 
 from config import Config
 from pipeline.api import CrofaiClient
-from pipeline.hindsight_client import HindsightStore
+from pipeline.canonical_store import CanonicalStore, FileCanonicalStore, create_canonical_store
 from pipeline.reio_compression import ReIOCompressor
 
 
@@ -396,6 +396,7 @@ def _draft_single_variant(
         "variant": style_name,
         "content": content,
         "score": score,
+        "estimated_input_tokens": _estimate_tokens(prompt),
     }
 
 
@@ -532,7 +533,7 @@ def run_draft(
     parallel_variants: bool = True,
     max_variants: int = 2,
     enable_revision: bool = True,
-    enable_gbrain: bool = True,
+    canonical_store: Optional[CanonicalStore] = None,
     enable_reio: bool = True,
 ) -> list[dict]:
     """Run the draft phase with revision loop and optional parallel variants.
@@ -589,9 +590,11 @@ def run_draft(
     active_threads = []
     written_chapter_meta = []
 
-    # Initialize Hindsight canonical state store
+    # Initialize canonical state store
     project_slug = os.path.basename(project_dir)
-    hindsight = HindsightStore(project_id=project_slug)
+    hindsight = create_canonical_store("file", project_dir=project_dir)
+    if canonical_store is not None:
+        hindsight = canonical_store
     hindsight.ensure_bank_safe()
 
     # Initialize ReIO compression
@@ -705,23 +708,8 @@ def run_draft(
                     hindsight_context=hindsight_context,
                     compressed_context=compressed_context,
                 )
-                # Estimate tokens
-                total_input_tokens += _estimate_tokens(
-                    CHAPTER_DRAFT_TEMPLATE.format(
-                        chapter_number=chapter_num,
-                        chapter_title=chapter_title,
-                        pov_character=pov,
-                        chapter_summary=summary,
-                        key_events="\n".join(f"- {e}" for e in key_events) if key_events else "",
-                        emotional_arc=emotional_arc or "",
-                        foreshadowing=foreshadowing or "",
-                        character_arc_beat=char_arc_beat or "",
-                        world_context=world_context or "",
-                        retrieved_context=retrieved_context,
-                        active_threads="\n".join(active_threads[-5:]) if active_threads else "",
-                        style_direction=style_desc,
-                    )
-                )
+                # Estimate tokens (use actual prompt tokens from variant result)
+                total_input_tokens += variant_result.get("estimated_input_tokens", 0)
                 total_output_tokens += _estimate_tokens(variant_result["content"])
                 total_variants_written += 1
 
@@ -786,7 +774,7 @@ def run_draft(
             )
             best_content = variant_result["content"]
             best_score = scorer.score_chapter(best_content)
-            total_input_tokens += _estimate_tokens(CHAPTER_DRAFT_TEMPLATE)
+            total_input_tokens += variant_result.get("estimated_input_tokens", 0)
             total_output_tokens += _estimate_tokens(best_content)
             total_variants_written = 1
             
@@ -831,7 +819,7 @@ def run_draft(
             pov=pov,
             word_count=best_score["word_count"],
             key_events=key_events if isinstance(key_events, list) else [key_events],
-            foreshadowing_elements=[(foreshadowing, chapter_num + 3)]
+            foreshadowing_elements=[(foreshadowing, min(chapter_num + 3, len(all_chapters)))]
             if foreshadowing else None,
         )
 
