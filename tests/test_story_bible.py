@@ -721,12 +721,47 @@ class TestThemesParsing(unittest.TestCase):
         self.assertEqual(result["spec"]["themes"], ["Justice", "Redemption", "Sacrifice"])
 
     def test_period_not_delimiter(self):
-        """Periods alone don't act as delimiters — they produce a single theme."""
+        """Periods followed by whitespace act as delimiters — they split themes."""
         answers = _single_answer("cp-12", "Justice. Redemption. Sacrifice.")
         result = compile_story_bible(_make_interview_result(answers))
-        # Period is not in the delimiter set [,;/-], so the whole string is one theme
-        # Trailing period gets stripped by .strip(".")
-        self.assertEqual(result["spec"]["themes"], ["Justice. Redemption. Sacrifice"])
+        # Period+whitespace is normalized to comma before the split
+        self.assertEqual(result["spec"]["themes"], ["Justice", "Redemption", "Sacrifice"])
+
+    def test_period_separated(self):
+        """Period-separated multi-word themes."""
+        answers = _single_answer("cp-12", "Justice. Redemption. Sacrifice.")
+        result = compile_story_bible(_make_interview_result(answers))
+        self.assertEqual(result["spec"]["themes"], ["Justice", "Redemption", "Sacrifice"])
+
+    def test_period_then_commas(self):
+        """Mixed period and comma separators."""
+        answers = _single_answer("cp-12", "Justice. Redemption, Sacrifice")
+        result = compile_story_bible(_make_interview_result(answers))
+        self.assertEqual(result["spec"]["themes"], ["Justice", "Redemption", "Sacrifice"])
+
+    def test_single_theme_with_period_end(self):
+        """Single theme with a trailing period."""
+        answers = _single_answer("cp-12", "Justice.")
+        result = compile_story_bible(_make_interview_result(answers))
+        self.assertEqual(result["spec"]["themes"], ["Justice"])
+
+    def test_mixed_period_and_and(self):
+        """Periods and 'and' as mixed delimiters."""
+        answers = _single_answer("cp-12", "Justice. Redemption and Sacrifice")
+        result = compile_story_bible(_make_interview_result(answers))
+        self.assertEqual(result["spec"]["themes"], ["Justice", "Redemption", "Sacrifice"])
+
+    def test_decimal_not_split(self):
+        """Period without following whitespace is not a delimiter (e.g. version numbers)."""
+        answers = _single_answer("cp-12", "Version 2.0")
+        result = compile_story_bible(_make_interview_result(answers))
+        self.assertEqual(result["spec"]["themes"], ["Version 2.0"])
+
+    def test_period_single_word_themes(self):
+        """Acceptance criteria: 'redemption. betrayal. hope and legacy' -> 4 themes."""
+        answers = _single_answer("cp-12", "redemption. betrayal. hope and legacy")
+        result = compile_story_bible(_make_interview_result(answers))
+        self.assertEqual(result["spec"]["themes"], ["redemption", "betrayal", "hope", "legacy"])
 
     def test_skipped_themes_is_empty(self):
         """Skipped cp-12 -> empty themes list."""

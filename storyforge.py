@@ -618,7 +618,12 @@ def main():
 
     if args.benchmark:
         from tests.benchmark_writing import run_benchmark
-        run_benchmark()
+        try:
+            run_benchmark()
+        except RuntimeError as e:
+            print(f"  Error: Benchmark failed — {e}", file=sys.stderr)
+            print("  Check your CROFAI_API_KEY and API endpoint configuration.", file=sys.stderr)
+            sys.exit(1)
         return
 
     # ── Interview resume path (--resume PROJECT_DIR) ──

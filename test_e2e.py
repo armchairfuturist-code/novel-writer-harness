@@ -98,5 +98,26 @@ class TestE2E(unittest.TestCase):
             self.assertEqual(r.returncode, 0, f"{label}: {r.stdout[:100]}")
             print(f"  {label}: PASS")
 
+
+
+    def test_benchmark_error(self):
+        """--benchmark without working API exits non-zero with informative error."""
+        import io as _io
+        saved_argv = list(sys.argv)
+        sys.argv = ["storyforge.py", "--benchmark"]
+        stderr_buf = _io.StringIO()
+        try:
+            with patch('sys.stderr', stderr_buf):
+                with patch('tests.benchmark_writing.run_benchmark',
+                           side_effect=RuntimeError('API returned 500')):
+                    with self.assertRaises(SystemExit):
+                        import storyforge
+                        storyforge.main()
+        finally:
+            sys.argv = saved_argv
+        stderr_text = stderr_buf.getvalue()
+        self.assertIn('Error', stderr_text)
+        self.assertIn('CROFAI_API_KEY', stderr_text)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

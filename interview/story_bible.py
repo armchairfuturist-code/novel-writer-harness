@@ -152,6 +152,8 @@ def _extract_themes(index: dict) -> list[str]:
     normalized = re.sub(r"\s+(&|and)\s+", ", ", raw)
     # Also handle "both X and Y" -> X, Y
     normalized = re.sub(r"(?i)both\s+", "", normalized)
+    # Normalize period+whitespace to comma (avoids splitting decimals like "2.0" or initials)
+    normalized = re.sub(r"\.\s+", ", ", normalized)
 
     # Split on common delimiters
     parts = re.split(r"[,;/-]+", normalized)
