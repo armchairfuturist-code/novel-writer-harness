@@ -61,3 +61,7 @@ vendor/
 coverage/
 .cache/
 tmp/
+
+# Kilo agent configuration
+.kilo/
+
