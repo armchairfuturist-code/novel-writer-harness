@@ -174,40 +174,37 @@ def run_iterative_backpropagation(
             print(f"      All issues resolved. Converged in {iteration + 1} iteration(s).")
             break
 
-        if iteration < max_iterations - 1:
-            # Generate revision instructions
-            instructions = generate_revision_instructions(all_issues)
+        # Generate revision instructions (always — even on last iteration)
+        instructions = generate_revision_instructions(all_issues)
 
-            # Check if issues are the same as last iteration (stagnation detection)
-            if iteration > 0:
-                prev_issues = all_issues_by_iter[iteration - 1]
-                prev_details = {i.get("detail", "") for i in prev_issues}
-                curr_details = {i.get("detail", "") for i in all_issues}
-                overlap = prev_details & curr_details
+        # Save revision plan for this iteration
+        rev_plan = {
+            "iteration": iteration + 1,
+            "instructions": instructions,
+            "issues_before": len(all_issues),
+        }
+        rev_path = os.path.join(project_dir, f"backprop-revision-iter-{iteration + 1}.json")
+        with open(rev_path, "w", encoding="utf-8") as f:
+            json.dump(rev_plan, f, indent=2)
+        print(f"      Revision plan saved to {rev_path}")
 
-                if len(overlap) >= len(prev_details) * 0.8:
-                    print(f"      Stagnation detected ({len(overlap)}/{len(prev_details)} issues unchanged). Stopping.")
-                    break
+        # Apply fixes to chapter files via LLM (always — even on last iteration)
+        chapters_revised = _apply_backprop_fixes(
+            project_dir, chapters_dir, all_issues, config, iteration,
+        )
+        if chapters_revised:
+            print(f"      Applied fixes to {chapters_revised} chapter(s)")
 
-            # Save revision plan for this iteration
-            rev_plan = {
-                "iteration": iteration + 1,
-                "instructions": instructions,
-                "issues_before": len(all_issues),
-            }
+        # Stagnation check — break AFTER applying fixes so the fix attempt is not lost
+        if iteration > 0:
+            prev_issues = all_issues_by_iter[iteration - 1]
+            prev_details = {i.get("detail", "") for i in prev_issues}
+            curr_details = {i.get("detail", "") for i in all_issues}
+            overlap = prev_details & curr_details
 
-            # Write revision plan to disk
-            rev_path = os.path.join(project_dir, f"backprop-revision-iter-{iteration + 1}.json")
-            with open(rev_path, "w", encoding="utf-8") as f:
-                json.dump(rev_plan, f, indent=2)
-            print(f"      Revision plan saved to {rev_path}")
-
-            # Apply fixes to chapter files via LLM
-            chapters_revised = _apply_backprop_fixes(
-                project_dir, chapters_dir, all_issues, config, iteration,
-            )
-            if chapters_revised:
-                print(f"      Applied fixes to {chapters_revised} chapter(s)")
+            if len(overlap) >= len(prev_details) * 0.8:
+                print(f"      Stagnation detected ({len(overlap)}/{len(prev_details)} issues unchanged). Applied fixes before stopping.")
+                break
 
     # Build final report
     total_issues_final = len(all_issues_by_iter[-1]) if all_issues_by_iter else 0

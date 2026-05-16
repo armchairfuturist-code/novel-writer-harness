@@ -94,6 +94,15 @@ def _save_checkpoint(project_dir: str, completed: set):
         pass
 
 
+# Phase output file names (centralized reference)
+PHASE_PATHS = {
+    "spec": "spec.json",
+    "world": "world.json",
+    "characters": "characters.json",
+    "outline": "outline.json",
+}
+
+
 def run_full_pipeline(
     concept: str,
     config: Optional[Config] = None,

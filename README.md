@@ -11,7 +11,7 @@ A mashup of ideas from 11+ open-source AI writing projects (Postwriter, autonove
 ### Requirements
 
 - Python 3.11+
-- An API key from crofai (set as `CROFAI_API_KEY` environment variable)
+- An API key for any OpenAI-compatible API provider (set as `LLM_API_KEY` or `CROFAI_API_KEY`)
 - `pip install httpx` (the only dependency)
 - Optional: `pandoc` + LaTeX for PDF/epub export
 
@@ -19,6 +19,12 @@ A mashup of ideas from 11+ open-source AI writing projects (Postwriter, autonove
 
 ```bash
 pip install httpx
+
+# Set your API key (any OpenAI-compatible provider):
+export LLM_API_KEY="your-api-key-here"
+export LLM_BASE_URL="https://api.openai.com/v1"     # default: https://beta.crof.ai/v1
+
+# Or just set CROFAI_API_KEY if using crof.ai:
 export CROFAI_API_KEY="your-api-key-here"
 ```
 
@@ -117,7 +123,7 @@ from pipeline.canonical_store import create_canonical_store
 store = create_canonical_store("file", project_dir="/tmp/my-novel")
 ```
 
-Available backends: `file` (default, zero dependencies), `hindsight` (HTTP-backed), `gbrain` (HTTP-backed), and `auto` (probes HTTP backends, falls back to file). Anyone can implement the `CanonicalStore` ABC and register it in the factory -- no pipeline changes needed.
+Available backends: `file` (default, zero dependencies -- the only built-in). For custom backends, use the `STORYFORGE_CANONICAL_STORE` environment variable to point to any `CanonicalStore` subclass. Anyone can implement the ABC and plug it in -- no pipeline changes needed.
 
 ### 4 rhetorical strategies (Postwriter-inspired)
 
@@ -198,7 +204,7 @@ For reference, the earlier release:
 | Literary critique | Kimi K2.6 | Dual-persona review (Critic + Professor) |
 | Canonical state store | Built-in (no API call) | Word-overlap scoring on local JSON file -- no LLM tokens |
 
-Configured for the crofai API (ai.nahcrof.com/v1). Change any model in `config.py`.
+Configured for any OpenAI-compatible API. The endpoint defaults to `https://beta.crof.ai/v1` but can be overridden with `LLM_BASE_URL`. Per-phase model selection can be overridden with `LLM_MODEL_SEED`, `LLM_MODEL_DRAFT`, `LLM_MODEL_REVIEW`, etc. Change routing defaults in `config.py`.
 
 ---
 
@@ -329,16 +335,11 @@ The store is pluggable via the `create_canonical_store()` factory:
 ```python
 # Default (zero dependencies) -- persists to canonical_state.json:
 store = create_canonical_store("file", project_dir="/tmp/my-novel")
-
-# HTTP-backed stores -- connect to external memory services:
-store = create_canonical_store("hindsight", project_dir="/tmp/my-novel")
-store = create_canonical_store("gbrain", project_dir="/tmp/my-novel")
-
-# Auto-detect -- try HTTP backends, fall back to file:
-store = create_canonical_store("auto", project_dir="/tmp/my-novel")
 ```
 
-The factory is used automatically by the pipeline. To implement a custom backend, subclass `CanonicalStore` and register it in the factory. No changes to the drafting pipeline are needed.
+Only the `file` backend ships built-in. For custom backends, set the `STORYFORGE_CANONICAL_STORE` environment variable to a dotted-path class (e.g., `myplugin.store.MyStore`). The imported class must be a `CanonicalStore` subclass. Optional config is passed via `STORYFORGE_STORE_CONFIG` as a JSON string.
+
+The factory is used automatically by the pipeline. No changes to the drafting pipeline are needed.
 
 ### Why it matters
 

@@ -1,4 +1,4 @@
-"""StoryForge configuration — crofai model routing, scoring thresholds, API config.
+"""StoryForge configuration — model routing, scoring thresholds, API config.
 
 Model routing strategy (updated 2026-05):
 - Kimi K2.6 and K2.6 Precision (prose-optimized): chapter drafting, prose generation
@@ -7,6 +7,11 @@ Model routing strategy (updated 2026-05):
 - Qwen3.5 9B (fast/cheap): scoring, mechanical checks, quick iterations
 - Qwen3.6 27B (mid-tier reasoning): upgrade path for scoring/reasoning tasks
 - GLM 5.1 (reasoning, high speed): mid-tier general tasks
+
+Provider-agnostic: any OpenAI-compatible API works via env vars:
+    LLM_BASE_URL  (default: https://beta.crof.ai/v1)
+    LLM_API_KEY   (fallback: CROFAI_API_KEY)
+    LLM_MODEL_{PHASE} — override model alias per phase (e.g. LLM_MODEL_DRAFT=kimi-precision)
 
 Usage:
     from config import Config
@@ -22,10 +27,14 @@ from typing import Optional
 
 @dataclass
 class ModelConfig:
-    """Single model configuration for crofai API calls."""
+    """Single model configuration for an LLM API call.
+
+    Works with any OpenAI-compatible endpoint. Override base_url per model
+    or set the global LLM_BASE_URL env var.
+    """
     name: str                           # Model identifier string
-    provider: str = "crofai"            # Provider name
-    base_url: str = "https://beta.crof.ai/v1"
+    provider: str = "openai-compatible"  # Provider label
+    base_url: str = ""                   # Defaults to config's base_url when empty
     max_tokens: int = 8192
     temperature: float = 0.8
     top_p: float = 0.95
@@ -69,17 +78,22 @@ class Config:
             return
         self._initialized = True
 
-        # --- API Configuration ---
-        self.api_key: str = self._get_env("CROFAI_API_KEY", "CROFAI_API_KEY")
+        # --- API Configuration (provider-agnostic) ---
+        # Generic env vars first, then provider-specific fallbacks.
+        # Users of any OpenAI-compatible API set LLM_BASE_URL + LLM_API_KEY.
+        # crof.ai users can continue using just CROFAI_API_KEY (unchanged).
+        self.api_key: str = self._get_env("LLM_API_KEY", "CROFAI_API_KEY")
         if not self.api_key:
             raise ValueError(
-                "CROFAI_API_KEY environment variable not set. "
-                "Set it before running the pipeline:\n"
-                "  export CROFAI_API_KEY='your-key-here'   (Mac/Linux)\n"
-                "  set CROFAI_API_KEY=your-key-here        (Windows CMD)\n"
-                "  $env:CROFAI_API_KEY='your-key-here'     (PowerShell)"
+                "No API key found. Set LLM_API_KEY or CROFAI_API_KEY:\n"
+                "  export LLM_API_KEY='your-key-here'        (any OpenAI-compatible provider)\n"
+                "  export CROFAI_API_KEY='your-key-here'     (crof.ai, fallback)\n"
+                "Or set via .env file."
             )
-        self.base_url: str = "https://beta.crof.ai/v1"
+        self.base_url: str = self._get_env(
+            "LLM_BASE_URL", "CROFAI_BASE_URL", ""
+        ) or "https://beta.crof.ai/v1"
+        self.default_model: str = self._get_env("LLM_DEFAULT_MODEL", "") or ""
 
         # --- Model Aliases (crofai model names) ---
         self.models = {
@@ -173,9 +187,24 @@ class Config:
         return ""
 
     def model_for_phase(self, phase: str) -> ModelConfig:
-        """Get the best model config for a pipeline phase."""
-        key = self.phase_models.get(phase, "kimi-balanced")
-        return self.models[key]
+        """Get the best model config for a pipeline phase.
+
+        Checks LLM_MODEL_{PHASE} env var first (e.g. LLM_MODEL_DRAFT),
+        then falls back to the configured phase-to-model routing.
+        Resolves base_url from config when ModelConfig.base_url is empty.
+        """
+        # Check env override first
+        env_key = os.environ.get(f"LLM_MODEL_{phase.upper()}")
+        if env_key and env_key in self.models:
+            key = env_key
+        else:
+            key = self.phase_models.get(phase, "kimi-balanced")
+        cfg = self.models[key]
+        # Resolve base_url
+        if not cfg.base_url:
+            from dataclasses import replace
+            cfg = replace(cfg, base_url=self.base_url)
+        return cfg
 
     def model_for_interview(self, task: str, override: Optional[str] = None) -> ModelConfig:
         """Get the best model config for an interview task.
@@ -190,14 +219,32 @@ class Config:
             ModelConfig for the routed or overridden model.
         """
         if override and override in self.models:
-            return self.models[override]
-        key = self.interview_models.get(task, "kimi-balanced")
-        return self.models[key]
+            cfg = self.models[override]
+        else:
+            # Check env override first
+            env_key = os.environ.get(f"LLM_MODEL_{task.upper()}")
+            if env_key and env_key in self.models:
+                key = env_key
+            else:
+                key = self.interview_models.get(task, "kimi-balanced")
+            cfg = self.models[key]
+        # Resolve base_url
+        if not cfg.base_url:
+            from dataclasses import replace
+            cfg = replace(cfg, base_url=self.base_url)
+        return cfg
 
     def model_for_benchmark(self, alias: str) -> ModelConfig:
         """Get model config for benchmark variants.
 
         Falls back to 'kimi-k2.6' (the base variant) when the requested
         alias is not in the benchmark registry.
+        Resolves base_url from config when ModelConfig.base_url is empty.
         """
-        return self.benchmark_models.get(alias, self.benchmark_models["kimi-k2.6"])
+        cfg = self.benchmark_models.get(alias, self.benchmark_models.get("kimi-k2.6"))
+        if cfg is None:
+            cfg = ModelConfig(name=alias or "kimi-k2.6", base_url=self.base_url)
+        if not cfg.base_url:
+            from dataclasses import replace
+            cfg = replace(cfg, base_url=self.base_url)
+        return cfg

@@ -445,75 +445,71 @@ class FileCanonicalStore(CanonicalStore):
 # --- Factory --------------------------------------------------------------
 
 
+def _import_custom_store(dotted_path: str):
+    """Import a CanonicalStore subclass from a dotted module path.
+
+    Example: myplugin.store.MyStore imports myplugin.store and
+    returns MyStore (the class, not an instance).
+    """
+    import importlib
+    parts = dotted_path.split(".")
+    module_path = ".".join(parts[:-1])
+    class_name = parts[-1]
+    module = importlib.import_module(module_path)
+    cls = getattr(module, class_name)
+    if not isinstance(cls, type) or not issubclass(cls, CanonicalStore):
+        raise TypeError(
+            f"{dotted_path} must be a CanonicalStore subclass, got {cls}"
+        )
+    return cls
+
+
 def create_canonical_store(
-    backend: str, project_dir: str, enabled: bool = True,
+    backend: str = "", project_dir: str = "", enabled: bool = True,
 ) -> CanonicalStore:
-    """Factory: return a CanonicalStore implementation by backend name.
+    """Factory: return a CanonicalStore implementation.
 
     Args:
         backend:
-            ``file`` (default, zero-dependency JSON store),
-            ``hindsight`` (HTTP-backed HindsightStore),
-            ``gbrain`` (HTTP-backed GBrainStore),
-            ``auto`` (probe HTTP stores, fall back to file).
+            file (default, zero-dependency JSON store).
+            Empty string checks the STORYFORGE_CANONICAL_STORE env var.
         project_dir: Project root directory.
         enabled: Whether the store is active.
 
+    Custom backends:
+        Set STORYFORGE_CANONICAL_STORE to a dotted path to your
+        CanonicalStore subclass, e.g.::
+
+            STORYFORGE_CANONICAL_STORE=myplugin.store.MyStore
+
+        Optionally pass JSON config via STORYFORGE_STORE_CONFIG,
+        accessible via os.environ["STORYFORGE_STORE_CONFIG"] in
+        your __init__.
+
     Returns:
         An initialised CanonicalStore instance.
-
-    For ``auto``, probes HTTP backends and falls back to
-    FileCanonicalStore when unavailable, so the caller always
-    receives a usable store.
     """
+    # Resolve backend: explicit arg > env var > "file"
+    if not backend:
+        backend = os.environ.get("STORYFORGE_CANONICAL_STORE", "file")
+
     norm = backend.strip().lower()
-    if norm == "file":
+    if norm == "file" or not norm:
         return FileCanonicalStore(project_dir=project_dir, enabled=enabled)
 
-    if norm == "hindsight":
-        from pipeline.hindsight_client import HindsightStore
-
-        return HindsightStore(
-            project_id=os.path.basename(project_dir), enabled=enabled,
+    # Custom dotted-path backend (e.g. "myplugin.store.MyStore")
+    if "." in backend:
+        cls = _import_custom_store(backend)
+        store_config_raw = os.environ.get("STORYFORGE_STORE_CONFIG", "")
+        store_config = json.loads(store_config_raw) if store_config_raw else {}
+        return cls(
+            project_dir=project_dir, enabled=enabled, **store_config,
         )
-
-    if norm == "gbrain":
-        from pipeline.gbrain_client import GBrainStore
-
-        return GBrainStore(
-            project_id=os.path.basename(project_dir), enabled=enabled,
-        )
-
-    if norm == "auto":
-        store = _try_http_store("hindsight", project_dir, enabled)
-        if store is not None:
-            return store
-        store = _try_http_store("gbrain", project_dir, enabled)
-        if store is not None:
-            return store
-        return FileCanonicalStore(project_dir=project_dir, enabled=enabled)
 
     msg = (
-        f"Canonical store backend {backend!r} is not implemented. "
-        f"Use file for the stdlib file-backed store."
+        f"Unknown canonical store backend {backend!r}. "
+        f"Use 'file' for the stdlib file-backed store, or set "
+        f"STORYFORGE_CANONICAL_STORE to a dotted path to your "
+        f"CanonicalStore subclass."
     )
     raise ValueError(msg)
-
-
-def _try_http_store(backend: str, project_dir: str, enabled: bool):
-    """Try to initialise an HTTP-backed store, returning None on failure."""
-    from pipeline.hindsight_client import HindsightStore
-    from pipeline.gbrain_client import GBrainStore
-
-    project_id = os.path.basename(project_dir)
-    try:
-        if backend == "hindsight":
-            store = HindsightStore(project_id=project_id, enabled=enabled)
-        else:
-            store = GBrainStore(project_id=project_id, enabled=enabled)
-        if store.ensure_bank_safe():
-            return store
-        store.close()
-    except Exception:
-        pass
-    return None

@@ -159,7 +159,7 @@ Return the complete JSON object as specified."""
             "new_word_count": len(new_text.split()),
             "category_breakdown": _categorize_cuts(cuts),
         }
-    except (RuntimeError, Exception) as e:
+    except Exception as e:
         # Fallback: just return mechanically tightened text
         return {
             "new_text": mechanically_edited,

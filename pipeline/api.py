@@ -1,7 +1,15 @@
-"""crofai API client — unified interface for all model calls.
+"""LLM API client — unified interface for all model calls.
 
 Thin wrapper around httpx for OpenAI-compatible chat completions.
+Works with any OpenAI-compatible provider (OpenAI, crof.ai, Together, etc.).
+Set LLM_BASE_URL + LLM_API_KEY env vars for your provider.
+crof.ai users can continue using just CROFAI_API_KEY (unchanged).
 Handles auth, streaming, retries, caching, and context management.
+
+Usage:
+    from pipeline.api import LLMClient
+    client = LLMClient()
+    response = client.chat(model_config, messages)
 """
 
 import hashlib
@@ -216,7 +224,11 @@ def _is_retryable(status_code: int) -> bool:
 
 
 class CrofaiClient:
-    """HTTP client for crofai OpenAI-compatible API."""
+    """HTTP client for OpenAI-compatible LLM APIs.
+
+    Works with any provider that exposes an OpenAI-compatible /chat/completions endpoint.
+    Configure via LLM_BASE_URL + LLM_API_KEY env vars, or use provider-specific fallbacks.
+    """
 
     def __init__(self, config: Optional[Config] = None, use_cache: bool = False):
         self.config = config or Config()
@@ -324,7 +336,7 @@ class CrofaiClient:
 
                 # Extract status code from error message
                 status_code = 0
-                for prefix in ["API error ", "crofai API error "]:
+                for prefix in ["API error "]:
                     if prefix in err_msg:
                         try:
                             code_str = err_msg.split(prefix)[1].split(":")[0].strip()
@@ -345,3 +357,6 @@ class CrofaiClient:
 
     def close(self):
         self._http.close()
+
+# LLMClient is the canonical name; CrofaiClient kept for backward compatibility.
+LLMClient = CrofaiClient
