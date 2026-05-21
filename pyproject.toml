@@ -20,3 +20,6 @@ Homepage = "https://github.com/armchairfuturist-code/novel-writer-harness"
 dev = [
     "pytest",
 ]
+
+[project.scripts]
+storyforge = "storyforge:main"
