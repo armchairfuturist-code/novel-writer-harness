@@ -74,10 +74,76 @@ Give it a seed concept and it will:
 3. **Create characters** -- 6-7 characters with motivations, flaws, secrets, and growth arcs
 4. **Outline the plot** -- chapter-by-chapter with key events, emotional arcs, and foreshadowing
 5. **Draft each chapter** -- with 4 rhetorical strategies, a revision loop, and persistent state tracking
-6. **Backward propagate** -- scans every chapter for contradictions, drift, and unresolved threads; iterates until clean
-7. **Adversarially edit** -- cuts weak spots and tightens prose mechanically
-8. **Review** -- two LLM critics (Literary Critic + Professor of Fiction) score, critique, and debate each other
-9. **Export** -- full manuscript as markdown, plus PDF/epub if Pandoc is installed
+6. **Debate** -- three specialized LLM agents (Lore Prosecutor, Plot Sentinel, Mechanical Magistrate) cross-examine each chapter against canonical state for continuity errors (opt-in with `--debate`)
+7. **Backward propagate** -- scans every chapter for contradictions, drift, and unresolved threads; iterates until clean
+8. **Adversarially edit** -- cuts weak spots and tightens prose mechanically
+9. **Review** -- two LLM critics (Literary Critic + Professor of Fiction) score, critique, and debate each other
+10. **Export** -- full manuscript as markdown, plus PDF/epub if Pandoc is installed
+
+---
+
+## v0.4: Triadic Constraint Debate Protocol (SGDD)
+
+The debate protocol replaces the generic mechanical revision prompt with a **state-grounded dialectical debate** between three specialized verification agents. Instead of "fix these banned words," the revision loop now gets canon-grounded instructions like "Fix Alice's eye color: canon says blue, draft says green."
+
+### Why a debate court?
+
+Single-pass LLM critiques lack cross-validation. The same model that wrote the chapter is asked to critique it — it sees what it expects to see. Three agents with different groundings (canonical state, foreshadowing tracker, mechanical scores) catch problems no single model could, and the cross-examination round forces them to confront each other's findings before a verdict is rendered.
+
+### The three agents
+
+| Agent | Grounding | What it checks | Model |
+|---|---|---|---|
+| **Lore Prosecutor** | `canonical_state.json` (character traits, world facts, plot threads, prior chapters) | Continuity breaks, trait drift, world-building violations, timeline errors | DeepSeek V4 Pro (large context) |
+| **Plot Sentinel** | Foreshadowing state machine + outline beats | Overdue threads, spontaneous plants, missed milestones, pacing violations | Kimi K2.6 (structural tracking) |
+| **Mechanical Magistrate** | Both transcripts + mechanical scores | Reconciles conflicts, deduplicates, outputs a single revision manifest JSON | Qwen3.5 9B (fast, deterministic) |
+
+### The debate loop
+
+```
+Chapter drafted → mechanical score < 6.0
+  │
+  ├─ Round 1: Lore Prosecutor + Plot Sentinel evaluate in parallel
+  │   (each grounded in different state — canon vs foreshadowing)
+  │
+  ├─ Round 2: Cross-examination (optional, up to 2 rounds)
+  │   Each agent reviews the other's complaints, flags conflicts
+  │
+  ├─ Round 3: Mechanical Magistrate renders verdict
+  │   Merges transcripts + mechanical scores → priority_manifest JSON
+  │
+  └─ If requires_rewrite: manifest replaces generic revision prompt
+     If no issues: revision skipped (chapter passes)
+```
+
+### Foreshadowing state machine
+
+The debate's Plot Sentinel needs structured foreshadowing tracking. The canonical store now tracks a 7-state machine:
+
+```
+planted → hinted → reinforced → due → overdue → paid
+                                       ↘ abandoned (any state)
+```
+
+Each foreshadowing element moves through states as chapters progress. The `due` and `overdue` states trigger the Plot Sentinel to flag the chapter if the thread isn't addressed.
+
+### How to use it
+
+```bash
+python storyforge.py "your concept" --debate
+```
+
+The `--debate` flag is **opt-in** because it adds 3-5 LLM calls per chapter revision (3 agents × 1-2 cross-exam rounds). Use it when continuity matters more than speed. `--quick` skips debate along with other quality phases.
+
+Configurable thresholds in `config.py`:
+
+```python
+config.debate.max_debate_rounds = 2       # Cross-examination rounds
+config.debate.force_rewrite_on_fatal = True  # FATAL break → always rewrite
+config.debate.acceptable_mechanical_floor = 6.0  # Only debate weak chapters
+```
+
+Env var overrides: `LLM_MODEL_LORE_PROSECUTOR`, `LLM_MODEL_PLOT_SENTINEL`, `LLM_MODEL_MECHANICAL_MAGISTRATE`.
 
 ---
 
@@ -202,6 +268,9 @@ For reference, the earlier release:
 | Backward propagation | Built-in (no API call) | Pattern matching -- detects contradictions without LLM |
 | Adversarial editing | Kimi K2.6 Precision | Identifies and classifies cuts per chapter |
 | Literary critique | Kimi K2.6 | Dual-persona review (Critic + Professor) |
+| Lore Prosecutor | DeepSeek V4 Pro | Continuity cross-referencing against canonical state |
+| Plot Sentinel | Kimi K2.6 | Foreshadowing state machine + outline beat compliance |
+| Mechanical Magistrate | Qwen3.5 9B | Conflict resolution, deterministic revision manifest |
 | Canonical state store | Built-in (no API call) | Word-overlap scoring on local JSON file -- no LLM tokens |
 
 Configured for any OpenAI-compatible API. The endpoint defaults to `https://beta.crof.ai/v1` but can be overridden with `LLM_BASE_URL`. Per-phase model selection can be overridden with `LLM_MODEL_SEED`, `LLM_MODEL_DRAFT`, `LLM_MODEL_REVIEW`, etc. Change routing defaults in `config.py`.
@@ -226,6 +295,7 @@ Configured for any OpenAI-compatible API. The endpoint defaults to `https://beta
 | `python storyforge.py --project-dir /path "concept"` | Override output directory |
 | `python storyforge.py --interactive` | Interactive interview mode (guided Q and A) |
 | `python storyforge.py --interactive --depth comprehensive` | Deep interview (73 questions, 6 dimensions) |
+| `python storyforge.py --debate "concept"` | Enable debate court — LLM agents cross-examine each chapter against canon for continuity errors before revision |
 | `python storyforge.py --help` | Show all options |
 
 ---
@@ -434,6 +504,7 @@ Default: Three-Act. Change in `pipeline/outline.py` or pass a structure key.
 - **NovelGenerator** (KazKozDev) -- Parallel perspective tracking, emotional arcs
 - **libriscribe** (guerra2fernando) -- Multi-model support, fact-checking
 - **NovelWriter** (EdwardAThomson) -- Genre templates, story structures, quality analytics
+- **Multi-agent debate** (armchairfuturist) -- Triadic Constraint Debate Protocol, state-grounded dialectical verification
 - **book-generator** (wesleyscholl) -- Pandoc/LaTeX export, KDP-ready output
 
 Benchmark methodology from [lechmazur/writing](https://github.com/lechmazur/writing).

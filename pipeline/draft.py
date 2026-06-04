@@ -465,12 +465,20 @@ def _run_revision_loop(
     style_name: str,
     max_rounds: int,
     config: Config,
+    canonical_store: Optional[CanonicalStore] = None,
+    chapter_num: int = 0,
+    chapter_title: str = "",
+    outline: Optional[dict] = None,
+    enable_debate: bool = False,
 ) -> tuple[str, dict, int]:
     """Run revision loop: score -> revise -> re-score up to max_rounds.
 
     Args:
         chapter_text: Initial chapter draft
         max_rounds: Max revision iterations
+        canonical_store: If set and enable_debate is True, runs the
+            debate protocol before generating revision prompts.
+        chapter_num / chapter_title / outline: Required for debate context.
 
     Returns:
         Tuple of (final_text, final_score_dict, revisions_done)
@@ -480,16 +488,63 @@ def _run_revision_loop(
     threshold = config.scoring.min_chapter_score  # 6.0
 
     revisions_done = 0
+    debate_ran = False
 
     for round_num in range(max_rounds):
         if current_score["total_score"] >= threshold:
             break
 
-        revision_prompt = _generate_revision_prompt(
-            current_text, current_score, style_name, config
-        )
-        if not revision_prompt:
-            break
+        # ── Debate Protocol (runs once, before first revision) ──────
+        if (
+            enable_debate
+            and not debate_ran
+            and canonical_store is not None
+            and outline is not None
+            and current_score["total_score"] < config.debate.acceptable_mechanical_floor
+        ):
+            from pipeline.debate import run_debate
+
+            print(f"      Debate Court: evaluating (score: {current_score['total_score']}/10)...")
+            try:
+                debate_result = run_debate(
+                    chapter_text=current_text,
+                    chapter_num=chapter_num,
+                    chapter_title=chapter_title,
+                    canonical_store=canonical_store,
+                    outline=outline,
+                    mechanical_score=current_score,
+                    config=config,
+                    enable_cross_exam=(config.debate.max_debate_rounds > 0),
+                )
+                debate_ran = True
+
+                fatal_c = debate_result.get("fatal_count", 0)
+                warn_c = debate_result.get("warning_count", 0)
+                print(f"        Fatal: {fatal_c} | Warnings: {warn_c} | "
+                      f"Rewrite: {debate_result['requires_rewrite']}")
+
+                if debate_result.get("requires_rewrite") and debate_result.get("revision_prompt"):
+                    # Use the debate-generated revision prompt instead of generic
+                    revision_prompt = debate_result["revision_prompt"]
+                    print(f"        Using debate revision manifest")
+                else:
+                    # Debate found no issues worth rewriting — skip revision
+                    print(f"        Debate cleared — no rewrite needed")
+                    break
+            except Exception as e:
+                print(f"        Debate failed: {e} — falling back to generic revision")
+                debate_ran = True  # Don't retry
+                revision_prompt = _generate_revision_prompt(
+                    current_text, current_score, style_name, config
+                )
+                if not revision_prompt:
+                    break
+        else:
+            revision_prompt = _generate_revision_prompt(
+                current_text, current_score, style_name, config
+            )
+            if not revision_prompt:
+                break
 
         print(f"      Revision round {round_num + 1}/{max_rounds} (score: {current_score['total_score']}/10)...")
 
@@ -535,6 +590,7 @@ def run_draft(
     enable_revision: bool = True,
     canonical_store: Optional[CanonicalStore] = None,
     enable_reio: bool = True,
+    enable_debate: bool = False,
 ) -> list[dict]:
     """Run the draft phase with revision loop and optional parallel variants.
 
@@ -549,6 +605,8 @@ def run_draft(
         parallel_variants: If True, draft multiple style variants per chapter
         max_variants: Max variants to draft (out of 3 style profiles)
         enable_revision: If True, run revision loop on each chapter
+        enable_debate: If True, run the Triadic Constraint Debate Protocol
+            in the revision loop (requires canonical_store + outline)
 
     Returns:
         List of chapter result dicts
@@ -723,6 +781,11 @@ def run_draft(
                         style_name=style_name,
                         max_rounds=config.scoring.max_revision_rounds,
                         config=config,
+                        canonical_store=canonical_store,
+                        chapter_num=chapter_num,
+                        chapter_title=chapter_title,
+                        outline=outline,
+                        enable_debate=enable_debate,
                     )
                     variant_result["content"] = revised_text
                     variant_result["score"] = revised_score
@@ -788,6 +851,11 @@ def run_draft(
                     style_name=best_style,
                     max_rounds=config.scoring.max_revision_rounds,
                     config=config,
+                    canonical_store=canonical_store,
+                    chapter_num=chapter_num,
+                    chapter_title=chapter_title,
+                    outline=outline,
+                    enable_debate=enable_debate,
                 )
                 total_revisions += rev_done
 

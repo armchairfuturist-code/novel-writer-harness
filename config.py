@@ -62,6 +62,14 @@ class ChapterConfig:
     auto_compress_at_tokens: int = 900000    # RESERVED: context compression not yet implemented
 
 
+@dataclass
+class DebateConfig:
+    """Configuration for the Triadic Constraint Debate Protocol (SGDD)."""
+    max_debate_rounds: int = 2               # Cross-examination round limit (plus 2 eval + 1 verdict = 5 total calls)
+    force_rewrite_on_fatal: bool = True       # If a FATAL continuity break is found, force revision
+    acceptable_mechanical_floor: float = 6.0  # Min mechanical score before debate triggers (only debate weak chapters)
+
+
 class Config:
     """Central configuration — all settings in one place. Singleton."""
 
@@ -155,6 +163,18 @@ class Config:
         # --- Scoring ---
         self.scoring = ScoringConfig()
 
+        # --- Debate Court Agent Routing ---
+        # Triadic Constraint Debate Protocol: three specialized agents
+        # cross-examine chapter drafts against canonical state.
+        self.debate_models = {
+            "lore_prosecutor": "deepseek",        # Large context, relational cross-referencing
+            "plot_sentinel": "kimi-balanced",      # Structural tracking, JSON constraints
+            "mechanical_magistrate": "flash",       # Fast, deterministic, JSON parsing
+        }
+
+        # --- Debate ---
+        self.debate = DebateConfig()
+
         # --- Chapter defaults ---
         self.chapter = ChapterConfig()
 
@@ -229,6 +249,30 @@ class Config:
                 key = self.interview_models.get(task, "kimi-balanced")
             cfg = self.models[key]
         # Resolve base_url
+        if not cfg.base_url:
+            from dataclasses import replace
+            cfg = replace(cfg, base_url=self.base_url)
+        return cfg
+
+    def model_for_debate(self, role: str) -> ModelConfig:
+        """Get the best model config for a debate court role.
+
+        Args:
+            role: One of 'lore_prosecutor', 'plot_sentinel', 'mechanical_magistrate'.
+
+        Returns:
+            ModelConfig for the routed model.
+
+        Checks LLM_MODEL_{ROLE} env var first (e.g. LLM_MODEL_LORE_PROSECUTOR),
+        then falls back to the configured debate routing.
+        Resolves base_url from config when ModelConfig.base_url is empty.
+        """
+        env_key = os.environ.get(f"LLM_MODEL_{role.upper()}")
+        if env_key and env_key in self.models:
+            key = env_key
+        else:
+            key = self.debate_models.get(role, "kimi-balanced")
+        cfg = self.models[key]
         if not cfg.base_url:
             from dataclasses import replace
             cfg = replace(cfg, base_url=self.base_url)

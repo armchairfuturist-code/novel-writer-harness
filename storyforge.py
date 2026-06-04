@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
-"""StoryForge — autonomous novel-writing pipeline v0.3.
+"""StoryForge — autonomous novel-writing pipeline v0.4.
 
 Usage:
     python storyforge.py "seed concept"
     python storyforge.py "seed concept" --genre mystery
-    python storyforge.py "seed concept" --resume 7
-    python storyforge.py "same concept"           # auto-resumes existing project
+    python storyforge.py "seed concept" --debate          # v0.4: debate court
+    python storyforge.py "same concept"                   # auto-resumes existing project
     python storyforge.py --benchmark
 
 Pipeline:
-    seed -> worldbuilding -> characters -> outline -> draft (revise, rhetorical variants,
-    RAG, GBrain canonical state, ReIO compression) -> fact-check ->
+    seed -> worldbuilding -> characters -> outline -> draft (revise, debate court,
+    rhetorical variants, RAG, canonical state, ReIO compression) -> fact-check ->
     iterative backprop -> adversarial edit -> review (dual-persona) -> export
+
+New in v0.4:
+    - Triadic Constraint Debate Protocol (SGDD) — three specialized LLM agents
+      cross-examine chapter drafts against canonical state for continuity errors
+    - Foreshadowing 7-state machine (planted → hinted → reinforced → due → overdue → paid)
+    - Debate config routing (model_for_debate, DebateConfig, env var overrides)
 
 New in v0.3:
     - GBrain canonical state store (structured memory across chapters)
@@ -49,14 +55,17 @@ from interview.chapter_feedback import get_user_feedback
 
 # Interview (S02+)
 from interview.resume import validate_checkpoint, recover_checkpoint, log_error
+
+# Agent system (v0.4+)
+from agents.orchestrator import run_showrunner_pipeline
 from interview.engine import _load_checkpoint as _load_interview_checkpoint
 from pipeline.canonical_store import CanonicalStore, FileCanonicalStore, create_canonical_store
 from interview.memory_store import create_memory_store
 
 BANNER = """
   +=========================================================+
-  |            StoryForge v0.3                               |
-  |  GBrain + Rhetorical Strategies + ReIO + Backprop        |
+  |            StoryForge v0.4                               |
+  |  Debate Court + Foreshadowing SM + ReIO + Backprop       |
   +=========================================================+
 """
 
@@ -118,6 +127,7 @@ def run_full_pipeline(
     enable_reio: bool = True,
     precompiled_spec: Optional[dict] = None,
     feedback_enabled: bool = True,
+    enable_debate: bool = False,
 ) -> str:
     """Run the full StoryForge pipeline from seed to export.
 
@@ -134,6 +144,7 @@ def run_full_pipeline(
         genre: Genre template to use (mystery, thriller, romance, fantasy, sci-fi)
         canonical_store: Canonical store instance (default: FileCanonicalStore)
         enable_reio: Enable ReIO context compression
+        enable_debate: Enable Triadic Constraint Debate Protocol in revision loop
 
     Returns:
         str: Path to the project output directory
@@ -300,6 +311,7 @@ def run_full_pipeline(
         print(f"  Revision loop: ENABLED (threshold: {config.scoring.min_chapter_score})")
         print(f"  Canonical store: {type(canonical_store).__name__ if canonical_store else 'FileCanonicalStore (default)'}")
         print(f"  ReIO compression: {'ON' if enable_reio else 'OFF'}")
+        print(f"  Debate protocol: {'ON' if enable_debate else 'OFF'}")
         print()
         start = time.time()
         chapters = run_draft(
@@ -307,6 +319,7 @@ def run_full_pipeline(
             resume_from=resume_from,
             parallel_variants=parallel_variants,
             canonical_store=canonical_store,
+            enable_debate=enable_debate,
         )
         elapsed = time.time() - start
         total_words = sum(c.get("word_count", 0) for c in chapters)
@@ -606,6 +619,25 @@ def main():
         help="Disable post-chapter feedback review",
     )
     parser.add_argument(
+        "--debate",
+        action="store_true",
+        help="Enable Triadic Constraint Debate Protocol — LLM agents cross-examine "
+             "chapters against canonical state for continuity errors before revision. "
+             "Increases per-chapter LLM calls by 3-5x.",
+    )
+    parser.add_argument(
+        "--agents",
+        action="store_true",
+        help="Use multi-agent system (Showrunner + parallel Writer agents). "
+             "Overrides standard pipeline with parallel chapter drafting.",
+    )
+    parser.add_argument(
+        "--parallel-writers",
+        type=int,
+        default=3,
+        help="Number of parallel writer agents for --agents mode (default: 3)",
+    )
+    parser.add_argument(
         "--store",
         choices=["json", "gbrain", "auto"],
         default="json",
@@ -713,21 +745,37 @@ def main():
             print(f"  Chapters: {compiled_spec.get('target_chapters', 'Auto')}")
             print(f"\n  Launching full pipeline from compiled bible...\n")
 
-            run_full_pipeline(
-                compiled_spec.get("title", "Untitled Story"),
-                config,
-                quick=args.quick,
-                parallel_variants=not args.single_variant,
-                dual_review=not args.single_review,
-                enable_backprop=not args.no_backprop,
-                enable_adversarial=not args.no_adversarial,
-                iterative_backprop=not args.no_iterative_backprop,
-                genre=args.genre,
-                canonical_store=create_canonical_store('file', project_dir=project_dir),
-                enable_reio=not args.no_reio,
-                precompiled_spec=compiled_spec,
-                feedback_enabled=feedback_enabled if feedback_enabled is not None else True,
-            )
+            if args.agents:
+                run_showrunner_pipeline(
+                    compiled_spec.get("title", "Untitled Story"),
+                    config,
+                    precompiled_spec=compiled_spec,
+                    genre=args.genre,
+                    project_dir=resume_dir,
+                    parallel_writers=args.parallel_writers,
+                    enable_revision=not args.quick,
+                    enable_backprop=not args.no_backprop,
+                    enable_adversarial=not args.no_adversarial,
+                    feedback_enabled=feedback_enabled if feedback_enabled is not None else True,
+                    enable_debate=args.debate,
+                )
+            else:
+                run_full_pipeline(
+                    compiled_spec.get("title", "Untitled Story"),
+                    config,
+                    quick=args.quick,
+                    parallel_variants=not args.single_variant,
+                    dual_review=not args.single_review,
+                    enable_backprop=not args.no_backprop,
+                    enable_adversarial=not args.no_adversarial,
+                    iterative_backprop=not args.no_iterative_backprop,
+                    genre=args.genre,
+                    canonical_store=create_canonical_store('file', project_dir=project_dir),
+                    enable_reio=not args.no_reio,
+                    precompiled_spec=compiled_spec,
+                    feedback_enabled=feedback_enabled if feedback_enabled is not None else True,
+                    enable_debate=args.debate,
+                )
         return
 
     # ── Interactive interview path (--interactive) ──
@@ -773,21 +821,37 @@ def main():
             print(f"\n  Launching full pipeline from compiled bible...\n")
 
             # Run the full pipeline with the compiled spec (skips seed phase)
-            run_full_pipeline(
-                compiled_spec.get("title", "Untitled Story"),
-                config,
-                quick=args.quick,
-                parallel_variants=not args.single_variant,
-                dual_review=not args.single_review,
-                enable_backprop=not args.no_backprop,
-                enable_adversarial=not args.no_adversarial,
-                iterative_backprop=not args.no_iterative_backprop,
-                genre=args.genre,
-                canonical_store=create_canonical_store('file', project_dir=project_dir),
-                enable_reio=not args.no_reio,
-                precompiled_spec=compiled_spec,
-                feedback_enabled=feedback_enabled if feedback_enabled is not None else True,
-            )
+            if args.agents:
+                run_showrunner_pipeline(
+                    compiled_spec.get("title", "Untitled Story"),
+                    config,
+                    precompiled_spec=compiled_spec,
+                    genre=args.genre,
+                    project_dir=project_dir,
+                    parallel_writers=args.parallel_writers,
+                    enable_revision=not args.quick,
+                    enable_backprop=not args.no_backprop,
+                    enable_adversarial=not args.no_adversarial,
+                    feedback_enabled=feedback_enabled if feedback_enabled is not None else True,
+                    enable_debate=args.debate,
+                )
+            else:
+                run_full_pipeline(
+                    compiled_spec.get("title", "Untitled Story"),
+                    config,
+                    quick=args.quick,
+                    parallel_variants=not args.single_variant,
+                    dual_review=not args.single_review,
+                    enable_backprop=not args.no_backprop,
+                    enable_adversarial=not args.no_adversarial,
+                    iterative_backprop=not args.no_iterative_backprop,
+                    genre=args.genre,
+                    canonical_store=create_canonical_store('file', project_dir=project_dir),
+                    enable_reio=not args.no_reio,
+                    precompiled_spec=compiled_spec,
+                    feedback_enabled=feedback_enabled if feedback_enabled is not None else True,
+                    enable_debate=args.debate,
+                )
         return
 
     # ── Pipeline path (requires concept) ──
@@ -796,21 +860,38 @@ def main():
         print("\nError: provide a seed concept or use --benchmark, --interactive, or --resume")
         sys.exit(1)
 
-    run_full_pipeline(
-        args.concept,
-        config,
-        resume_from=1,  # Pipeline auto-resumes via checkpoint detection
-        quick=args.quick,
-        parallel_variants=not args.single_variant,
-        dual_review=not args.single_review,
-        enable_backprop=not args.no_backprop,
-        enable_adversarial=not args.no_adversarial,
-        iterative_backprop=not args.no_iterative_backprop,
-        genre=args.genre,
-        canonical_store=create_canonical_store('file', project_dir=project_dir),
-        enable_reio=not args.no_reio,
-        feedback_enabled=feedback_enabled if feedback_enabled is not None else False,
-    )
+    # Determine project directory
+    project_slug = slugify(args.concept)[:40]
+
+    if args.agents:
+        run_showrunner_pipeline(
+            args.concept,
+            config,
+            genre=args.genre,
+            parallel_writers=args.parallel_writers,
+            enable_revision=not args.quick,
+            enable_backprop=not args.no_backprop,
+            enable_adversarial=not args.no_adversarial,
+            feedback_enabled=feedback_enabled if feedback_enabled is not None else False,
+            enable_debate=args.debate,
+        )
+    else:
+        run_full_pipeline(
+            args.concept,
+            config,
+            resume_from=1,
+            quick=args.quick,
+            parallel_variants=not args.single_variant,
+            dual_review=not args.single_review,
+            enable_backprop=not args.no_backprop,
+            enable_adversarial=not args.no_adversarial,
+            iterative_backprop=not args.no_iterative_backprop,
+            genre=args.genre,
+            canonical_store=create_canonical_store('file', project_dir=project_dir),
+            enable_reio=not args.no_reio,
+            feedback_enabled=feedback_enabled if feedback_enabled is not None else False,
+            enable_debate=args.debate,
+        )
 
 
 if __name__ == "__main__":

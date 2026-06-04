@@ -92,6 +92,14 @@ class CanonicalStore(ABC):
         ...
 
     @abstractmethod
+    def mark_foreshadowing_progress(self, element: str, new_status: str, chapter: int):
+        ...
+
+    @abstractmethod
+    def get_foreshadowing_by_status(self, status: str) -> list[dict]:
+        ...
+
+    @abstractmethod
     def record_chapter_summary(self, chapter: int, title: str, summary: str, pov: str, word_count: int, key_events: list):
         ...
 
@@ -103,6 +111,47 @@ class CanonicalStore(ABC):
     def ensure_bank_safe(self) -> bool:
         ...
 
+
+
+# --- Foreshadowing State Machine ----------------------------------
+
+# Valid sequential states for foreshadowing tracking.
+# planted → hinted → reinforced → due → overdue → paid
+#                                → abandoned (any state)
+FORESHADOWING_STATUSES = [
+    "planted",      # Element introduced as a seed
+    "hinted",       # Subtle reminder or second reference
+    "reinforced",   # Third+ signal, reader should notice
+    "due",          # Payoff expected in this chapter range
+    "overdue",      # Payoff window passed without resolution
+    "paid",         # Seed successfully resolved
+    "abandoned",    # Seed deliberately dropped (narrative dead-end)
+]
+
+_FORESHADOWING_STATE_ORDER = {
+    "planted": 0,
+    "hinted": 1,
+    "reinforced": 2,
+    "due": 3,
+    "overdue": 4,
+    "paid": 5,
+    "abandoned": -1,  # terminal, no order
+}
+
+# Valid forward transitions
+_FORESHADOWING_TRANSITIONS = {
+    "planted":      {"hinted", "reinforced", "due", "overdue", "abandoned"},
+    "hinted":       {"reinforced", "due", "overdue", "abandoned"},
+    "reinforced":   {"due", "overdue", "abandoned"},
+    "due":          {"overdue", "paid", "abandoned"},
+    "overdue":      {"paid", "abandoned"},
+    "paid":         set(),       # terminal
+    "abandoned":    set(),       # terminal
+}
+
+def is_valid_foreshadowing_transition(from_status: str, to_status: str) -> bool:
+    """Check if a foreshadowing state transition is valid."""
+    return to_status in _FORESHADOWING_TRANSITIONS.get(from_status, set())
 
 
 # --- Tag-to-key mapping --------------------------------------------
@@ -332,10 +381,7 @@ class FileCanonicalStore(CanonicalStore):
         ]
 
     def get_foreshadowing_debts(self) -> list[dict]:
-        return [
-            f for f in self._filter("foreshadowing")
-            if "unpaid" in f.get("content", "").lower()
-        ]
+        return self._filter("foreshadowing", tag_filter=["due", "overdue"])
 
     def get_chapter_summaries(self) -> list[dict]:
         return self._filter("chapter_summaries")
@@ -396,22 +442,56 @@ class FileCanonicalStore(CanonicalStore):
         content = f"Foreshadowing: " + chr(39) + f"{element}" + chr(39) + f" planted in Ch {plant_chapter}{ps}"
         self.store_memory(
             content=content,
-            tags=["foreshadowing", "unpaid", element.lower()],
+            tags=["foreshadowing", "planted", element.lower()],
             importance=importance,
             metadata={"element": element, "plant_chapter": plant_chapter,
                       "expected_payoff_chapter": expected_payoff_chapter,
-                      "status": "unpaid", "entity_type": "foreshadowing"},
+                      "status": "planted", "entity_type": "foreshadowing"},
         )
 
     def mark_foreshadowing_paid(self, element: str, payoff_chapter: int):
-        content = f"Foreshadowing PAID: " + chr(39) + f"{element}" + chr(39) + f" paid off in Ch {payoff_chapter}"
+        self.mark_foreshadowing_progress(element, "paid", payoff_chapter)
+
+    def mark_foreshadowing_progress(self, element: str, new_status: str, chapter: int):
+        if new_status not in _FORESHADOWING_TRANSITIONS:
+            raise ValueError(
+                f"Unknown foreshadowing status {new_status!r}. "
+                f"Valid: {sorted(_FORESHADOWING_TRANSITIONS.keys())}"
+            )
+        content = (
+            f"Foreshadowing: {element!r} status={new_status} "
+            f"(updated Ch {chapter})"
+        )
+        tags = ["foreshadowing", new_status, element.lower()]
+        # Remove old status tags on existing entries for this element
+        existing = self._filter("foreshadowing", tag_filter=[element.lower()])
+        for entry in existing:
+            old_tags = entry.get("tags", [])
+            # Remove any status tag that isn't 'foreshadowing' or the element name
+            entry["tags"] = [
+                t for t in old_tags
+                if t not in _FORESHADOWING_TRANSITIONS
+            ]
         self.store_memory(
             content=content,
-            tags=["foreshadowing", "paid", element.lower()],
-            importance=0.5,
-            metadata={"element": element, "payoff_chapter": payoff_chapter,
-                      "status": "paid", "entity_type": "foreshadowing"},
+            tags=tags,
+            importance=0.6,
+            metadata={
+                "element": element,
+                "status": new_status,
+                "chapter": chapter,
+                "entity_type": "foreshadowing",
+            },
         )
+
+    def get_foreshadowing_by_status(self, status: str) -> list[dict]:
+        """Return all foreshadowing entries with a given status."""
+        if status not in _FORESHADOWING_TRANSITIONS:
+            raise ValueError(
+                f"Unknown foreshadowing status {status!r}. "
+                f"Valid: {sorted(_FORESHADOWING_TRANSITIONS.keys())}"
+            )
+        return self._filter("foreshadowing", tag_filter=[status])
 
     def record_chapter_summary(
         self, chapter: int, title: str, summary: str, pov: str,
