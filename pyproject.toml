@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "storyforge"
 version = "0.1.0"
-description = "Autonomous novel-writing pipeline. Give it a seed concept, get a complete novel."
+description = "Autonomous novel-writing pipeline with multi-model AI routing (Kimi K2.6, DeepSeek, Gemini). Markdown/PDF/epub export."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -15,3 +15,11 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/armchairfuturist-code/novel-writer-harness"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[project.scripts]
+storyforge = "storyforge:main"

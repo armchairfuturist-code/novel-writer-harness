@@ -18,6 +18,8 @@ from typing import Optional
 from config import Config
 from pipeline.api import CrofaiClient
 from pipeline.canonical_store import CanonicalStore, FileCanonicalStore, create_canonical_store
+from pipeline.embedding_store import EmbeddingStore
+from pipeline.foreshadow_tracker import ForeshadowTracker, ForeshadowElement
 from pipeline.reio_compression import ReIOCompressor
 
 
@@ -97,16 +99,10 @@ World context / setting: {world_context}
 
 {hindsight_canonical_state}
 
-Character cast (only these characters exist in this story; do not invent new ones):
-{character_cast}
-
 Relevant context from earlier chapters (retrieved by relevance):
 {retrieved_context}
 
-{compressed_narrative_context}
-
-Active threads to manage:
-{active_threads}
+{foreshadow_context}
 
 Style direction: {style_direction}
 
@@ -271,10 +267,7 @@ class ChapterScorer:
             if count > 0:
                 banned_found[word] = count
 
-        # Penalize per occurrence (not per unique word type) so 20 "very" instances
-        # actually trigger the revision loop. Cap at -5.0 to avoid total score collapse.
-        total_banned_occurrences = sum(banned_found.values())
-        banned_penalty = total_banned_occurrences * self.config.scoring.banned_word_penalty
+        banned_penalty = len(banned_found) * self.config.scoring.banned_word_penalty
         banned_penalty = max(banned_penalty, -5.0)
 
         tell_patterns = [
@@ -303,14 +296,6 @@ class ChapterScorer:
         if tell_ratio > self.config.scoring.show_dont_tell_threshold:
             base_score -= (tell_ratio - self.config.scoring.show_dont_tell_threshold) * 3
         base_score += pacing_score * 0.5
-
-        # Word count penalty: chapters significantly below target get dinged
-        target_wc = self.config.chapter.target_words_per_chapter
-        if word_count < target_wc * 0.6:
-            # Below 60% of target: -0.5 per 1000 words under
-            shortfall = (target_wc - word_count) / 1000
-            base_score -= min(shortfall * 0.5, 2.0)
-
         base_score = max(0, min(10, base_score))
 
         return {
@@ -341,30 +326,16 @@ def _draft_single_variant(
     char_arc_beat: str,
     world_context: str,
     retrieved_context: str,
-    active_threads: list,
+    foreshadow_context: str,
     style_direction: str,
     style_name: str,
     config: Config,
     scorer: ChapterScorer,
     chapter_spec: dict,
-    characters: dict = None,
     hindsight_context: str = "",
     compressed_context: str = "",
 ) -> dict:
     """Draft a single variant of a chapter and score it."""
-        # Build character cast list from characters dict
-    cast_lines = []
-    if characters:
-        char_list = characters.get("characters", characters.get("raw_characters", []))
-        if isinstance(char_list, list):
-            for c in char_list:
-                name = c.get("name", "?")
-                role = c.get("role", "?")
-                bg = c.get("background", "")[:120]
-                arc = c.get("arc", "")
-                cast_lines.append(f"- {name} ({role}): {bg} | Arc: {arc}")
-    character_cast = "\n".join(cast_lines) if cast_lines else "See character profiles above."
-
     prompt = CHAPTER_DRAFT_TEMPLATE.format(
         chapter_number=chapter_num,
         chapter_title=chapter_title,
@@ -377,10 +348,8 @@ def _draft_single_variant(
         world_context=world_context or "As established in world bible.",
         hindsight_canonical_state=hindsight_context or "[No additional canonical state available]",
         retrieved_context=retrieved_context,
-        compressed_narrative_context=compressed_context or "[No compressed context available]",
-        active_threads="\n".join(active_threads[-5:]) if active_threads else "None yet.",
+        foreshadow_context=foreshadow_context,
         style_direction=style_direction,
-        character_cast=character_cast,
     )
 
     content = client.chat_with_retry(
@@ -396,7 +365,6 @@ def _draft_single_variant(
         "variant": style_name,
         "content": content,
         "score": score,
-        "estimated_input_tokens": _estimate_tokens(prompt),
     }
 
 
@@ -408,7 +376,6 @@ def _generate_revision_prompt(
     chapter_text: str,
     mechanical_score: dict,
     style_name: str,
-    config: Config,
 ) -> str:
     """Generate a revision prompt from mechanical score weaknesses."""
     issues = []
@@ -435,11 +402,10 @@ def _generate_revision_prompt(
             f"Vary sentence lengths more for rhythm. Mix short punchy sentences with longer flowing ones."
         )
 
-    # Word count — enforce config target (default 4000)
-    target = config.chapter.target_words_per_chapter
-    if mechanical_score["word_count"] < target * 0.75:
+    # Word count
+    if mechanical_score["word_count"] < 2000:
         issues.append(
-            f"- Chapter is short ({mechanical_score['word_count']} words, target {target}). "
+            f"- Chapter is short ({mechanical_score['word_count']} words). "
             f"Expand scenes with more sensory detail, interiority, and action."
         )
 
@@ -524,24 +490,22 @@ def _run_revision_loop(
                       f"Rewrite: {debate_result['requires_rewrite']}")
 
                 if debate_result.get("requires_rewrite") and debate_result.get("revision_prompt"):
-                    # Use the debate-generated revision prompt instead of generic
                     revision_prompt = debate_result["revision_prompt"]
                     print(f"        Using debate revision manifest")
                 else:
-                    # Debate found no issues worth rewriting — skip revision
                     print(f"        Debate cleared — no rewrite needed")
                     break
             except Exception as e:
                 print(f"        Debate failed: {e} — falling back to generic revision")
-                debate_ran = True  # Don't retry
+                debate_ran = True
                 revision_prompt = _generate_revision_prompt(
-                    current_text, current_score, style_name, config
+                    current_text, current_score, style_name
                 )
                 if not revision_prompt:
                     break
         else:
             revision_prompt = _generate_revision_prompt(
-                current_text, current_score, style_name, config
+                current_text, current_score, style_name
             )
             if not revision_prompt:
                 break
@@ -589,7 +553,6 @@ def run_draft(
     max_variants: int = 2,
     enable_revision: bool = True,
     canonical_store: Optional[CanonicalStore] = None,
-    enable_reio: bool = True,
     enable_debate: bool = False,
 ) -> list[dict]:
     """Run the draft phase with revision loop and optional parallel variants.
@@ -605,6 +568,7 @@ def run_draft(
         parallel_variants: If True, draft multiple style variants per chapter
         max_variants: Max variants to draft (out of 3 style profiles)
         enable_revision: If True, run revision loop on each chapter
+        canonical_store: If set, enables canonical state tracking (debate + context)
         enable_debate: If True, run the Triadic Constraint Debate Protocol
             in the revision loop (requires canonical_store + outline)
 
@@ -628,8 +592,9 @@ def run_draft(
     if not all_chapters:
         raise ValueError("No chapters found in outline")
 
-    # Initialize BM25 retriever with outline summaries
-    retriever = BM25Retriever()
+    # Initialize semantic embedding store (replaces BM25)
+    store = EmbeddingStore(os.path.join(project_dir, "embeddings.db"))
+    # Prime the store with outline summaries for semantic retrieval
     all_chapter_meta = [
         {
             "chapter": i + 1,
@@ -640,20 +605,25 @@ def run_draft(
         }
         for i, ch in enumerate(all_chapters)
     ]
-    retriever.index(all_chapter_meta)
-
     total = len(all_chapters)
     results = []
-    previous_summary = "Beginning of the story. No prior events."
-    active_threads = []
     written_chapter_meta = []
 
-    # Initialize canonical state store
-    project_slug = os.path.basename(project_dir)
-    hindsight = create_canonical_store("file", project_dir=project_dir)
+    # Initialize foreshadow tracker (imports from outline on first run)
+    foreshadow_tracker = ForeshadowTracker(os.path.join(project_dir, "foreshadow_state.json"))
+    if foreshadow_tracker.active_count == 0:
+        imported = foreshadow_tracker.import_from_outline(all_chapters)
+        if imported:
+            print(f"    Imported {imported} foreshadow threads from outline")
+    foreshadow_tracker.save()
+
+    # Initialize canonical state store (use passed-in store or create default)
     if canonical_store is not None:
-        hindsight = canonical_store
-    hindsight.ensure_bank_safe()
+        canonical = canonical_store
+    else:
+        project_slug = os.path.basename(project_dir)
+        canonical = create_canonical_store(store_type="file", project_id=project_slug)
+    canonical.ensure_bank_safe()
 
     # Initialize ReIO compression
     reio = ReIOCompressor(
@@ -681,22 +651,24 @@ def run_draft(
         foreshadowing = chapter_spec.get("foreshadowing", "")
         char_arc_beat = chapter_spec.get("character_arc_beat", "")
 
-        # --- RAG Context Retrieval ---
-        # Build query from this chapter's outline + active threads
+        # --- Semantic Context Retrieval ---
+        # Build query from this chapter's outline
         query = f"{summary} {emotional_arc} {pov} {' '.join(key_events) if isinstance(key_events, list) else key_events}"
-        written_numbers = {r["chapter"] for r in written_chapter_meta} | {chapter_num}
-        relevant_chapters = retriever.search(query, k=3, exclude_chapters=written_numbers)
+        written_numbers = {r.get("chapter", 0) for r in written_chapter_meta}
+        relevant_chapters = store.search(query, k=3, exclude=written_numbers if written_numbers else None)
 
         retrieved_context = ""
         if relevant_chapters:
             retrieved_lines = []
             for rc in relevant_chapters:
-                meta = all_chapter_meta[rc["chapter"] - 1]
-                s = meta.get("summary", "")
-                if s:
-                    retrieved_lines.append(f"  - Ch {rc['chapter']} ({rc['title']}): {s[:200]} (relevance: {rc['score']:.2f})")
+                retrieved_lines.append(
+                    f"  - Ch {rc['chapter']}: {rc['content'][:200]} (relevance: {rc['score']:.2f})"
+                )
             if retrieved_lines:
-                retrieved_context = "Related story elements from unconnected chapters:\n" + "\n".join(retrieved_lines)
+                retrieved_context = "Related story elements from across the narrative:\n" + "\n".join(retrieved_lines)
+
+        # --- Foreshadow context ---
+        foreshadow_context = foreshadow_tracker.format_context_for_prompt(chapter_num)
 
         # --- Context from previously written chapters (last N) ---
         window = config.chapter.context_carry_window
@@ -717,7 +689,7 @@ def run_draft(
             world_context = f"{wc[:200]}\n{mood[:200]}"
 
         # --- Hindsight canonical state ---
-        hindsight_context = hindsight.format_context_for_drafting(chapter_num, summary)
+        hindsight_context = canonical.format_context_for_drafting(chapter_num, summary)
 
         # --- ReIO compressed narrative context ---
         compressed_context = ""
@@ -728,7 +700,7 @@ def run_draft(
                 chapter_summaries=written_chapter_meta,
                 arc_summaries=reio.build_arc_summaries(outline, written_chapter_meta)
                 if written_chapter_meta else None,
-                critical_state=hindsight_context if hindsight.enabled else None,
+                critical_state=hindsight_context if canonical.enabled else None,
             )
 
         print(f"  Drafting Chapter {chapter_num}/{total}: {chapter_title}...")
@@ -740,8 +712,7 @@ def run_draft(
             profiles_to_use = DEFAULT_STYLE_PROFILES[:max_variants]
             variants = []
 
-            for si, style_name in enumerate(profiles_to_use):
-                style_desc = STYLE_PROFILES.get(style_name, "")
+            for si, (style_name, style_desc) in enumerate(profiles_to_use):
                 print(f"    Variant {si + 1}/{len(profiles_to_use)}: {style_name}...")
                 variant_result = _draft_single_variant(
                     client=client,
@@ -756,18 +727,32 @@ def run_draft(
                     char_arc_beat=char_arc_beat,
                     world_context=world_context,
                     retrieved_context=retrieved_context,
-                    active_threads=active_threads,
+                    foreshadow_context=foreshadow_context,
                     style_direction=style_desc,
                     style_name=style_name,
                     config=config,
                     scorer=scorer,
                     chapter_spec=chapter_spec,
-                    characters=characters,
                     hindsight_context=hindsight_context,
                     compressed_context=compressed_context,
                 )
-                # Estimate tokens (use actual prompt tokens from variant result)
-                total_input_tokens += variant_result.get("estimated_input_tokens", 0)
+                # Estimate tokens
+                total_input_tokens += _estimate_tokens(
+                    CHAPTER_DRAFT_TEMPLATE.format(
+                        chapter_number=chapter_num,
+                        chapter_title=chapter_title,
+                        pov_character=pov,
+                        chapter_summary=summary,
+                        key_events="\n".join(f"- {e}" for e in key_events) if key_events else "",
+                        emotional_arc=emotional_arc or "",
+                        foreshadowing=foreshadowing or "",
+                        character_arc_beat=char_arc_beat or "",
+                        world_context=world_context or "",
+                        retrieved_context=retrieved_context,
+                        foreshadow_context=foreshadow_context,
+                        style_direction=style_desc,
+                    )
+                )
                 total_output_tokens += _estimate_tokens(variant_result["content"])
                 total_variants_written += 1
 
@@ -781,7 +766,7 @@ def run_draft(
                         style_name=style_name,
                         max_rounds=config.scoring.max_revision_rounds,
                         config=config,
-                        canonical_store=canonical_store,
+                        canonical_store=canonical,
                         chapter_num=chapter_num,
                         chapter_title=chapter_title,
                         outline=outline,
@@ -809,38 +794,34 @@ def run_draft(
             print(f"    Selected: {best_style} (score: {best_score['total_score']}/10)")
         else:
             # Single variant (original behavior or 1 variant)
-            best_style = "suspense_first"
-            profile_name = best_style
-            profile_desc = STYLE_PROFILES.get(profile_name, "")
-            variant_result = _draft_single_variant(
-                client=client,
-                model=model,
-                chapter_num=chapter_num,
-                chapter_title=chapter_title,
-                pov=pov,
-                summary=summary,
-                key_events=key_events,
-                emotional_arc=emotional_arc,
-                foreshadowing=foreshadowing,
-                char_arc_beat=char_arc_beat,
-                world_context=world_context,
-                retrieved_context=retrieved_context,
-                compressed_context=compressed_context,
-                hindsight_context=hindsight_context,
-                active_threads=active_threads,
-                style_name=profile_name,
-                style_direction=profile_desc,
-                config=config,
-                scorer=scorer,
-                chapter_spec=chapter_spec,
-                characters=characters,
+            best_style = "default"
+            profiles_to_use = DEFAULT_STYLE_PROFILES[:1]
+            style_name, style_desc = profiles_to_use[0]
+
+            best_content = client.chat_with_retry(
+                model,
+                messages=[{"role": "user", "content": CHAPTER_DRAFT_TEMPLATE.format(
+                    chapter_number=chapter_num,
+                    chapter_title=chapter_title,
+                    pov_character=pov,
+                    chapter_summary=summary,
+                    key_events="\n".join(f"- {e}" for e in key_events) if key_events else "",
+                    emotional_arc=emotional_arc or "",
+                    foreshadowing=foreshadowing or "",
+                    character_arc_beat=char_arc_beat or "",
+                    world_context=world_context or "",
+                    retrieved_context=retrieved_context,
+                    foreshadow_context=foreshadow_context,
+                    style_direction=style_desc,
+                )}],
+                system_prompt=DRAFT_SYSTEM_PROMPT,
+                temperature=0.8,
             )
-            best_content = variant_result["content"]
             best_score = scorer.score_chapter(best_content)
-            total_input_tokens += variant_result.get("estimated_input_tokens", 0)
+            total_input_tokens += _estimate_tokens(CHAPTER_DRAFT_TEMPLATE)
             total_output_tokens += _estimate_tokens(best_content)
             total_variants_written = 1
-            
+
             # Revision loop on single variant
             if enable_revision:
                 best_content, best_score, rev_done = _run_revision_loop(
@@ -851,7 +832,7 @@ def run_draft(
                     style_name=best_style,
                     max_rounds=config.scoring.max_revision_rounds,
                     config=config,
-                    canonical_store=canonical_store,
+                    canonical_store=canonical,
                     chapter_num=chapter_num,
                     chapter_title=chapter_title,
                     outline=outline,
@@ -880,27 +861,38 @@ def run_draft(
         written_chapter_meta.append(chapter_result)
 
         # Update Hindsight canonical state
-        hindsight.update_after_chapter(
+        canonical.update_after_chapter(
             chapter_num=chapter_num,
             title=chapter_title,
             summary=summary,
             pov=pov,
             word_count=best_score["word_count"],
             key_events=key_events if isinstance(key_events, list) else [key_events],
-            foreshadowing_elements=[(foreshadowing, min(chapter_num + 3, len(all_chapters)))]
+            foreshadowing_elements=[(foreshadowing, chapter_num + 3)]
             if foreshadowing else None,
         )
 
-        # Update context
-        previous_summary = f"Chapter {chapter_num}: {summary[:200]}"
+        # Update foreshadow tracker with chapter content
+        chapter_text = best_content
+        hits = foreshadow_tracker.scan_chapter_text(chapter_text)
+        if hits:
+            auto_ids = foreshadow_tracker.auto_propose_from_scan(chapter_num, hits)
+            if auto_ids:
+                print(f"      Auto-detected {len(auto_ids)} foreshadow signals")
+        foreshadow_tracker.save()
 
-        if foreshadowing:
-            active_threads.append(f"[Foreshadow Ch{chapter_num}]: {foreshadowing[:100]}")
+        # Index chapter content for semantic retrieval
+        store.remove_chapter(chapter_num)
+        store.add(chapter_num, summary, section="summary")
+        if best_content:
+            store.add(chapter_num, best_content[:2000], section="chapter_text")
 
         print(f"    Final: Score {best_score['total_score']}/10 | {best_score['word_count']} words | "
               f"Style: {best_style}")
 
     client.close()
+    store.close()
+    foreshadow_tracker.save_if_dirty()
 
     # Print token usage summary
     total_cost_estimate = total_input_tokens * 0.000002 + total_output_tokens * 0.000010  # rough
