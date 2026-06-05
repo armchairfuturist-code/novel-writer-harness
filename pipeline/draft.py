@@ -897,6 +897,7 @@ def run_draft(
                     world_context=world_context or "",
                     retrieved_context=retrieved_context,
                     foreshadow_context=foreshadow_context,
+                    hindsight_canonical_state=hindsight_context or "[No additional canonical state available]",
                     style_direction=style_desc,
                 )}],
                 system_prompt=DRAFT_SYSTEM_PROMPT,

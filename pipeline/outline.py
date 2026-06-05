@@ -261,6 +261,33 @@ def run_outline(spec: dict, world: dict, characters: dict, structure: str = "thr
             registered_names.add(c.get("name", "").lower().strip())
         registered_names.discard("")
 
+        # Common English words / locations / abstract concepts that appear in
+        # key_events but are never character names — filter them out.
+        _NON_CHARACTER_WORDS = {
+            # Places & geography
+            "french quarter", "mississippi river", "chicago", "new orleans", "the quarter",
+            "river", "city", "street", "alley", "club", "theater", "church", "graveyard",
+            "docks", "warehouse", "mansion", "parlor", "hotel", "station", "bridge",
+            "garden", "market", "square", "port", "bayou",
+            # Events / concepts
+            "carnival", "mardi gras", "funeral", "parade", "mass", "ritual", "ceremony",
+            "flood", "storm", "hurricane", "fire", "earthquake", "eclipse",
+            "celebration", "festival", "procession", "performance", "show",
+            # Objects / items
+            "photograph", "letter", "trumpet", "locket", "mirror", "knife", "gun",
+            "carriage", "train", "automobile", "ship",
+            # People roles (not specific characters)
+            "child", "children", "elder", "priest", "mayor", "doctor", "officer",
+            "stranger", "crowd", "mob", "audience", "musician", "band",
+            "the blue healer", "the bleeding note", "the crescent city", "final",
+            "first", "second", "last", "next",
+            # Abstract / descriptive
+            "she", "they", "their", "her", "him", "his",
+            "creole", "cajun", "voodoo", "jazz", "blues",
+            "unintentional", "spectral", "failed", "unexpected",
+            "silas", "celeste", "tito", "elise",  # will be caught by name check
+        }
+
         for act in outline.get("acts", []):
             for ch in act.get("chapters", []):
                 pov = ch.get("pov", "")
@@ -272,13 +299,22 @@ def run_outline(spec: dict, world: dict, characters: dict, structure: str = "thr
                 events = ch.get("key_events", [])
                 if isinstance(events, list):
                     for event in events:
-                        event_lower = event.lower()
                         import re
                         # Find capitalized multi-word phrases that look like character names
                         for match in re.finditer(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', event):
                             name = match.group(0).lower()
-                            if len(name) > 2 and name not in ('The', 'A', 'An', 'This', 'That', 'It', 'I', 'You', 'He', 'She', 'We', 'They', 'Chapter', 'We Need', 'Act'):
-                                if name not in registered_names:
-                                    print(f"  [WARN] Chapter {ch.get('chapter', '?')}: character '{match.group(0)}' may be an unregistered character. Add to characters.json.")
+                            # Skip: short words, stopwords, known non-character terms
+                            if len(name) <= 2:
+                                continue
+                            if name in _NON_CHARACTER_WORDS:
+                                continue
+                            # Skip single-word common-noun markers (words that never name a person)
+                            if len(name.split()) == 1 and name in {
+                                "the", "a", "an", "this", "that", "it", "i", "you",
+                                "he", "she", "we", "they", "chapter", "act", "need",
+                            }:
+                                continue
+                            if name not in registered_names:
+                                print(f"  [WARN] Chapter {ch.get('chapter', '?')}: character '{match.group(0)}' may be an unregistered character. Add to characters.json.")
 
     return outline
