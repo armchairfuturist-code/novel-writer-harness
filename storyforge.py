@@ -1,17 +1,28 @@
 #!/usr/bin/env python3
-"""StoryForge — autonomous novel-writing pipeline v0.4.
+"""StoryForge — autonomous novel-writing pipeline v0.5.
 
 Usage:
     python storyforge.py "seed concept"
     python storyforge.py "seed concept" --genre mystery
     python storyforge.py "seed concept" --debate          # v0.4: debate court
+    python storyforge.py "seed concept" --style-profile ch-001  # v0.5: style engine
     python storyforge.py "same concept"                   # auto-resumes existing project
     python storyforge.py --benchmark
 
 Pipeline:
     seed -> worldbuilding -> characters -> outline -> draft (revise, debate court,
-    rhetorical variants, RAG, canonical state, ReIO compression) -> fact-check ->
-    iterative backprop -> adversarial edit -> review (dual-persona) -> export
+    change declarations, style engine, rhetorical variants, RAG, canonical state,
+    knowledge base, ReIO compression) -> fact-check -> iterative backprop ->
+    adversarial edit -> review (dual-persona) -> export
+
+New in v0.5:
+    - Structured Change Declarations — 12-category ---CHANGES--- JSON block after
+      every chapter; deterministic canonical store updates from LLM declarations
+    - Style Engine — pure-Python prose feature extraction (10 quantitative dimensions);
+      reusable style profiles; profile binding and comparison
+    - Lazy-Loaded Knowledge Base — 10 curated writing theory reference files;
+      injected into debate agent prompts at ≤500 tokens per agent
+    - Debate court cross-validates declared changes against continuity complaints
 
 New in v0.4:
     - Triadic Constraint Debate Protocol (SGDD) — three specialized LLM agents
@@ -64,8 +75,8 @@ from interview.memory_store import create_memory_store
 
 BANNER = """
   +=========================================================+
-  |            StoryForge v0.4                               |
-  |  Debate Court + Foreshadowing SM + ReIO + Backprop       |
+  |            StoryForge v0.5                               |
+  |  Changes + Style Engine + KB + Debate Court + ReIO      |
   +=========================================================+
 """
 
