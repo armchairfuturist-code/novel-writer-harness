@@ -57,7 +57,12 @@ emotional resonance. Dialogue reveals inner conflict more than plot information.
 Pacing: reflective. Scene length: longer. Tension: emotional.""",
 }
 
-DEFAULT_STYLE_PROFILES = ["suspense_first", "reveal_late", "sensory_immersion", "interiority_forward"]
+DEFAULT_STYLE_PROFILES = [
+    ("suspense_first", STYLE_PROFILES["suspense_first"]),
+    ("reveal_late", STYLE_PROFILES["reveal_late"]),
+    ("sensory_immersion", STYLE_PROFILES["sensory_immersion"]),
+    ("interiority_forward", STYLE_PROFILES["interiority_forward"]),
+]
 
 DRAFT_SYSTEM_PROMPT = """You are an award-winning novelist writing a chapter of a book.
 Write literary-quality prose that:
@@ -77,7 +82,11 @@ REVISION_SYSTEM_PROMPT = """You are a revision specialist. Your job is to revise
 based on specific editorial feedback. Keep what works, fix what doesn't. Do not rewrite from
 scratch - preserve voice and intent while addressing every criticism.
 
-Write 3000-5000 words. Maintain the same POV and tone."""
+Write 3000-5000 words. Maintain the same POV and tone.
+
+After the revised chapter body, append a structured change declaration block
+(---CHANGES--- ... ---END CHANGES---) listing what state transitions occurred in this revision.
+Use empty lists [] for categories with no changes."""
 
 CHAPTER_DRAFT_TEMPLATE = """Write Chapter {chapter_number}: {chapter_title}
 
@@ -107,7 +116,28 @@ Relevant context from earlier chapters (retrieved by relevance):
 Style direction: {style_direction}
 
 Write the chapter now. Focus on craft: sensory immersion, pacing, dialogue rhythm,
-interiority. Make every sentence earn its place."""
+interiority. Make every sentence earn its place.
+
+After the chapter body, append a structured change declaration block
+using the format below. List ONLY things that actually changed in this chapter.
+Empty categories should be empty lists [].
+
+---CHANGES---
+{{
+  "character_status": [{{"character":"Name","change_type":"level_up/gained_ability/lost_ability/mental_state/key_event/relationship","detail":"Specific change","chapter":{chapter_number}}}]],
+  "conflict_progress": [{{"conflict_id":"conflict name","new_status":"status","event":"what advanced"}}],
+  "plot_nodes": [{{"keyword":"event keyword","summary":"one line","characters":["involved"],"story_line":"main/sub"}}],
+  "foreshadowing_actions": [{{"element":"element name","action":"setup/payoff","detail":"what happened"}}],
+  "location_changes": [{{"location":"name","new_state":"state","event":"cause"}}],
+  "faction_changes": [{{"faction":"name","new_state":"state","event":"cause"}}],
+  "time_advancement": [{{"time_period":"period","elapsed":"duration","events":["event"]}}],
+  "character_movement": [{{"character":"Name","from_location":"origin","to_location":"destination"}}],
+  "item_transfers": [{{"item":"name","from_holder":"origin","to_holder":"destination","state":"condition"}}],
+  "secret_reveals": [{{"secret_id":"name","new_knowers":["who"],"method":"how revealed"}}],
+  "oath_changes": [{{"oath_id":"name","action":"made/broken/fulfilled","characters":["involved"],"constraints":"terms"}}],
+  "deadline_changes": [{{"deadline_id":"name","action":"set/advanced/expired","trigger":"condition","time_remaining":"duration"}}]
+}}
+---END CHANGES---"""
 
 
 def _estimate_tokens(text: str) -> int:
@@ -334,6 +364,7 @@ def _draft_single_variant(
     chapter_spec: dict,
     hindsight_context: str = "",
     compressed_context: str = "",
+    enable_changes: bool = True,
 ) -> dict:
     """Draft a single variant of a chapter and score it."""
     prompt = CHAPTER_DRAFT_TEMPLATE.format(
@@ -359,12 +390,19 @@ def _draft_single_variant(
         temperature=0.8,
     )
 
+    # Parse structured change declarations from LLM output
+    declared_changes = None
+    if enable_changes:
+        from pipeline.changes import parse_changes_block
+        content, declared_changes = parse_changes_block(content)
+
     score = scorer.score_chapter(content)
 
     return {
         "variant": style_name,
         "content": content,
         "score": score,
+        "declared_changes": declared_changes,
     }
 
 
@@ -436,7 +474,9 @@ def _run_revision_loop(
     chapter_title: str = "",
     outline: Optional[dict] = None,
     enable_debate: bool = False,
-) -> tuple[str, dict, int]:
+    enable_changes: bool = True,
+    enable_knowledge_base: bool = True,
+) -> tuple[str, dict, int, Optional[dict]]:
     """Run revision loop: score -> revise -> re-score up to max_rounds.
 
     Args:
@@ -447,7 +487,7 @@ def _run_revision_loop(
         chapter_num / chapter_title / outline: Required for debate context.
 
     Returns:
-        Tuple of (final_text, final_score_dict, revisions_done)
+        Tuple of (final_text, final_score_dict, revisions_done, declared_changes)
     """
     current_text = chapter_text
     current_score = scorer.score_chapter(current_text)
@@ -455,6 +495,7 @@ def _run_revision_loop(
 
     revisions_done = 0
     debate_ran = False
+    declared_changes = None
 
     for round_num in range(max_rounds):
         if current_score["total_score"] >= threshold:
@@ -481,6 +522,8 @@ def _run_revision_loop(
                     mechanical_score=current_score,
                     config=config,
                     enable_cross_exam=(config.debate.max_debate_rounds > 0),
+                    declared_changes=declared_changes,
+                    enable_knowledge_base=enable_knowledge_base,
                 )
                 debate_ran = True
 
@@ -519,6 +562,14 @@ def _run_revision_loop(
                 system_prompt=REVISION_SYSTEM_PROMPT,
                 temperature=0.7,
             )
+
+            # Parse changes from revised output
+            if enable_changes:
+                from pipeline.changes import parse_changes_block
+                revised, rev_changes = parse_changes_block(revised)
+                if rev_changes is not None:
+                    declared_changes = rev_changes
+
             new_score = scorer.score_chapter(revised)
 
             # Only accept revision if score improves
@@ -534,7 +585,7 @@ def _run_revision_loop(
             print(f"        Revision failed: {e}")
             break
 
-    return current_text, current_score, revisions_done
+    return current_text, current_score, revisions_done, declared_changes
 
 
 # ---------------------------------------------------------------------------
@@ -554,6 +605,10 @@ def run_draft(
     enable_revision: bool = True,
     canonical_store: Optional[CanonicalStore] = None,
     enable_debate: bool = False,
+    enable_changes: bool = True,
+    style_profile_name: Optional[str] = None,
+    auto_style_extract: bool = False,
+    enable_knowledge_base: bool = True,
 ) -> list[dict]:
     """Run the draft phase with revision loop and optional parallel variants.
 
@@ -571,6 +626,12 @@ def run_draft(
         canonical_store: If set, enables canonical state tracking (debate + context)
         enable_debate: If True, run the Triadic Constraint Debate Protocol
             in the revision loop (requires canonical_store + outline)
+        enable_changes: If True, require ---CHANGES--- declarations and
+            apply them to the canonical store after each chapter
+        style_profile_name: Named style profile to bind to all chapters.
+            Overrides the rhetorical strategy direction.
+        auto_style_extract: If True, extract and save a style profile
+            after each chapter is written.
 
     Returns:
         List of chapter result dicts
@@ -616,6 +677,16 @@ def run_draft(
         if imported:
             print(f"    Imported {imported} foreshadow threads from outline")
     foreshadow_tracker.save()
+
+    # ── Style engine: load bound profile if specified ─────────────────
+    bound_style_profile = None
+    if style_profile_name:
+        from pipeline.style_engine import load_style_profile, format_style_for_prompt
+        bound_style_profile = load_style_profile(style_profile_name, project_dir)
+        if bound_style_profile:
+            print(f"    Bound style profile: {style_profile_name}")
+        else:
+            print(f"    WARNING: Style profile '{style_profile_name}' not found in styles/")
 
     # Initialize canonical state store (use passed-in store or create default)
     if canonical_store is not None:
@@ -713,6 +784,10 @@ def run_draft(
             variants = []
 
             for si, (style_name, style_desc) in enumerate(profiles_to_use):
+                # Override with bound style profile if one is loaded
+                if bound_style_profile is not None:
+                    from pipeline.style_engine import format_style_for_prompt
+                    style_desc = format_style_for_prompt(bound_style_profile)
                 print(f"    Variant {si + 1}/{len(profiles_to_use)}: {style_name}...")
                 variant_result = _draft_single_variant(
                     client=client,
@@ -735,6 +810,7 @@ def run_draft(
                     chapter_spec=chapter_spec,
                     hindsight_context=hindsight_context,
                     compressed_context=compressed_context,
+                    enable_changes=enable_changes,
                 )
                 # Estimate tokens
                 total_input_tokens += _estimate_tokens(
@@ -758,7 +834,7 @@ def run_draft(
 
                 # Run revision loop on this variant
                 if enable_revision:
-                    revised_text, revised_score, rev_done = _run_revision_loop(
+                    revised_text, revised_score, rev_done, changes = _run_revision_loop(
                         client=client,
                         model=model,
                         chapter_text=variant_result["content"],
@@ -771,10 +847,14 @@ def run_draft(
                         chapter_title=chapter_title,
                         outline=outline,
                         enable_debate=enable_debate,
+                        enable_changes=enable_changes,
+                        enable_knowledge_base=enable_knowledge_base,
                     )
                     variant_result["content"] = revised_text
                     variant_result["score"] = revised_score
                     variant_result["revisions"] = rev_done
+                    if changes is not None:
+                        variant_result["declared_changes"] = changes
                     total_revisions += rev_done
                 else:
                     variant_result["revisions"] = 0
@@ -795,8 +875,13 @@ def run_draft(
         else:
             # Single variant (original behavior or 1 variant)
             best_style = "default"
+            single_variant_changes = None
             profiles_to_use = DEFAULT_STYLE_PROFILES[:1]
             style_name, style_desc = profiles_to_use[0]
+            # Override with bound style profile if one is loaded
+            if bound_style_profile is not None:
+                from pipeline.style_engine import format_style_for_prompt
+                style_desc = format_style_for_prompt(bound_style_profile)
 
             best_content = client.chat_with_retry(
                 model,
@@ -824,7 +909,7 @@ def run_draft(
 
             # Revision loop on single variant
             if enable_revision:
-                best_content, best_score, rev_done = _run_revision_loop(
+                best_content, best_score, rev_done, changes = _run_revision_loop(
                     client=client,
                     model=model,
                     chapter_text=best_content,
@@ -837,7 +922,11 @@ def run_draft(
                     chapter_title=chapter_title,
                     outline=outline,
                     enable_debate=enable_debate,
+                    enable_changes=enable_changes,
+                    enable_knowledge_base=enable_knowledge_base,
                 )
+                if changes is not None:
+                    single_variant_changes = changes
                 total_revisions += rev_done
 
         # Save chapter
@@ -860,17 +949,30 @@ def run_draft(
         results.append(chapter_result)
         written_chapter_meta.append(chapter_result)
 
-        # Update Hindsight canonical state
-        canonical.update_after_chapter(
-            chapter_num=chapter_num,
-            title=chapter_title,
-            summary=summary,
-            pov=pov,
-            word_count=best_score["word_count"],
-            key_events=key_events if isinstance(key_events, list) else [key_events],
-            foreshadowing_elements=[(foreshadowing, chapter_num + 3)]
-            if foreshadowing else None,
-        )
+        # ── Apply canonical state updates (changes-based or fallback) ─
+        chapter_changes = None
+        if enable_changes and parallel_variants and max_variants >= 2:
+            chapter_changes = best.get("declared_changes")
+        elif enable_changes:
+            chapter_changes = single_variant_changes
+
+        if enable_changes and chapter_changes is not None:
+            from pipeline.changes import apply_changes_to_store, changes_to_summary_line
+            change_count = apply_changes_to_store(chapter_changes, canonical, chapter_num)
+            summary_line = changes_to_summary_line(chapter_changes)
+            print(f"    Changes: {summary_line} ({change_count} store updates)")
+        else:
+            # Fallback: traditional passive state extraction
+            canonical.update_after_chapter(
+                chapter_num=chapter_num,
+                title=chapter_title,
+                summary=summary,
+                pov=pov,
+                word_count=best_score["word_count"],
+                key_events=key_events if isinstance(key_events, list) else [key_events],
+                foreshadowing_elements=[(foreshadowing, chapter_num + 3)]
+                if foreshadowing else None,
+            )
 
         # Update foreshadow tracker with chapter content
         chapter_text = best_content
@@ -889,6 +991,16 @@ def run_draft(
 
         print(f"    Final: Score {best_score['total_score']}/10 | {best_score['word_count']} words | "
               f"Style: {best_style}")
+
+        # ── Auto-extract style profile after chapter save ──────────
+        if auto_style_extract and best_content:
+            from pipeline.style_engine import extract_style, save_style_profile
+            try:
+                ch_profile = extract_style(best_content, chapter_num, name=f"chapter-{chapter_num:03d}")
+                saved_path = save_style_profile(ch_profile, project_dir)
+                print(f"    Style extracted: {saved_path}")
+            except Exception as e:
+                print(f"    Style extraction skipped: {e}")
 
     client.close()
     store.close()

@@ -17,7 +17,11 @@ Design:
 """
 
 import textwrap
+from collections import Counter
 from typing import Optional
+
+import os
+import re
 
 from config import Config
 from pipeline.api import CrofaiClient, parse_json_output
@@ -75,6 +79,7 @@ LORE_PROSECUTOR_PROMPT = """Evaluate this chapter draft for continuity errors ag
 ### PREVIOUSLY ESTABLISHED CONTEXT:
 {retrieved_context}
 
+{reference_context}
 ### CURRENT CHAPTER DRAFT TO EVALUATE:
 Chapter {chapter_num}: {chapter_title}
 
@@ -130,6 +135,7 @@ PLOT_SENTINEL_PROMPT = """Evaluate this chapter draft for structural and plot in
 ### CHAPTER OUTLINE BEATS:
 {outline_beats}
 
+{reference_context}
 ### CURRENT CHAPTER DRAFT TO EVALUATE:
 Chapter {chapter_num}: {chapter_title}
 
@@ -199,6 +205,8 @@ MAGISTRATE_PROMPT = """Render a verdict on Chapter {chapter_num}: "{chapter_titl
 
 ### RAW MECHANICAL QUALITY SCORES:
 {mechanical_metrics}
+
+{declared_changes_context}
 
 ### CHAPTER TEXT (for reference):
 {chapter_text}
@@ -449,6 +457,16 @@ def _build_revision_prompt_from_manifest(
     return "\n".join(parts)
 
 
+def _render_reference(kb, agent_role: str, keywords: list[str]) -> str:
+    """Render knowledge base references for a debate agent, or empty string."""
+    if kb is None or not keywords:
+        return ""
+    try:
+        return kb.get_references(agent_role, keywords, max_tokens=500)
+    except Exception:
+        return ""
+
+
 # ── Public Entry Point ───────────────────────────────────────────────
 
 def run_debate(
@@ -460,6 +478,9 @@ def run_debate(
     mechanical_score: dict,
     config: Optional[Config] = None,
     enable_cross_exam: bool = True,
+    declared_changes: Optional[dict] = None,
+    enable_knowledge_base: bool = True,
+    knowledge_base_dir: Optional[str] = None,
 ) -> dict:
     """Run the Triadic Constraint Debate Protocol on a chapter draft.
 
@@ -472,6 +493,13 @@ def run_debate(
         mechanical_score: ChapterScorer output dict.
         config: Config override.
         enable_cross_exam: If True, run Round 2 cross-examination.
+        declared_changes: Optional structured change declarations from the
+            drafting LLM. When present, the Magistrate can cross-validate
+            the LLM's own state claims against continuity complaints.
+        enable_knowledge_base: If True, inject writing theory references
+            into agent prompts from reference/knowledge/ directory.
+        knowledge_base_dir: Path to knowledge base directory (default:
+            reference/knowledge/ relative to project root).
 
     Returns:
         Dict with keys:
@@ -496,11 +524,35 @@ def run_debate(
     foreshadowing_context = _format_foreshadowing_context(canonical_store)
     outline_beats = _format_outline_beats(outline, chapter_num)
 
+    # ── Knowledge Base: resolve role-specific references ──────────
+    reference_context = ""
+    ctx_keywords = []
+    if enable_knowledge_base:
+        try:
+            from pipeline.knowledge_base import KnowledgeBase
+            kb_dir = knowledge_base_dir or os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "reference", "knowledge",
+            )
+            kb = KnowledgeBase(kb_dir)
+            # Build keyword list from chapter context
+            if chapter_title:
+                ctx_keywords.extend(chapter_title.lower().split())
+            if chapter_text:
+                # Grab the most frequent significant words
+                words = re.findall(r'\b[a-z]{4,}\b', chapter_text[:1000].lower())
+                ctx_keywords.extend([w for w, _ in Counter(words).most_common(10)])
+        except Exception:
+            kb = None
+    else:
+        kb = None
+
     lore_result = _call_agent(
         client, lore_model, LORE_PROSECUTOR_SYSTEM,
         LORE_PROSECUTOR_PROMPT.format(
             canonical_context=canonical_context,
             retrieved_context=retrieved_context,
+            reference_context=_render_reference(kb, "lore_prosecutor", ctx_keywords) if kb else "",
             chapter_num=chapter_num,
             chapter_title=chapter_title,
             chapter_text=chapter_text,
@@ -513,6 +565,7 @@ def run_debate(
         PLOT_SENTINEL_PROMPT.format(
             foreshadowing_context=foreshadowing_context,
             outline_beats=outline_beats,
+            reference_context=_render_reference(kb, "plot_sentinel", ctx_keywords) if kb else "",
             chapter_num=chapter_num,
             chapter_title=chapter_title,
             chapter_text=chapter_text,
@@ -562,6 +615,10 @@ def run_debate(
     magistrate_model = config.model_for_debate("mechanical_magistrate")
     mechanical_metrics = _format_mechanical_metrics(mechanical_score)
 
+    # Format declared changes for cross-validation
+    from pipeline.changes import format_changes_for_magistrate
+    declared_changes_context = format_changes_for_magistrate(declared_changes or {})
+
     magistrate_result = _call_agent(
         client, magistrate_model, MAGISTRATE_SYSTEM,
         MAGISTRATE_PROMPT.format(
@@ -570,6 +627,7 @@ def run_debate(
             lore_transcript=repr(lore_result),
             sentinel_transcript=repr(sentinel_result),
             mechanical_metrics=mechanical_metrics,
+            declared_changes_context=declared_changes_context,
             chapter_text=chapter_text[:3000],  # Truncate for context
         ),
         label="mechanical_magistrate",

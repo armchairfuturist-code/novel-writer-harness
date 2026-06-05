@@ -28,7 +28,8 @@ class TestRhetoricalStrategies(unittest.TestCase):
 
     def test_default_profiles_use_new_names(self):
         expected = ["suspense_first", "reveal_late", "sensory_immersion", "interiority_forward"]
-        self.assertEqual(DEFAULT_STYLE_PROFILES, expected)
+        profile_names = [name for name, _ in DEFAULT_STYLE_PROFILES]
+        self.assertEqual(profile_names, expected)
 
     def test_each_profile_has_rhetorical_strategy_label(self):
         for name, desc in STYLE_PROFILES.items():

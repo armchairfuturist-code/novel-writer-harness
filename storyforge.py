@@ -128,6 +128,10 @@ def run_full_pipeline(
     precompiled_spec: Optional[dict] = None,
     feedback_enabled: bool = True,
     enable_debate: bool = False,
+    enable_changes: bool = True,
+    style_profile_name: Optional[str] = None,
+    auto_style_extract: bool = False,
+    enable_knowledge_base: bool = True,
 ) -> str:
     """Run the full StoryForge pipeline from seed to export.
 
@@ -145,6 +149,10 @@ def run_full_pipeline(
         canonical_store: Canonical store instance (default: FileCanonicalStore)
         enable_reio: Enable ReIO context compression
         enable_debate: Enable Triadic Constraint Debate Protocol in revision loop
+        enable_changes: Enable structured ---CHANGES--- declarations after each chapter
+        style_profile_name: Named style profile to bind to all chapters
+        auto_style_extract: Auto-extract style profiles after each chapter
+        enable_knowledge_base: Enable lazy-loaded reference knowledge for debate agents
 
     Returns:
         str: Path to the project output directory
@@ -312,6 +320,10 @@ def run_full_pipeline(
         print(f"  Canonical store: {type(canonical_store).__name__ if canonical_store else 'FileCanonicalStore (default)'}")
         print(f"  ReIO compression: {'ON' if enable_reio else 'OFF'}")
         print(f"  Debate protocol: {'ON' if enable_debate else 'OFF'}")
+        print(f"  Change declarations: {'ON' if enable_changes else 'OFF'}")
+        print(f"  Knowledge base: {'ON' if enable_knowledge_base else 'OFF'}")
+        if style_profile_name:
+            print(f"  Style profile: {style_profile_name}")
         print()
         start = time.time()
         chapters = run_draft(
@@ -320,6 +332,10 @@ def run_full_pipeline(
             parallel_variants=parallel_variants,
             canonical_store=canonical_store,
             enable_debate=enable_debate,
+            enable_changes=enable_changes,
+            style_profile_name=style_profile_name,
+            auto_style_extract=auto_style_extract,
+            enable_knowledge_base=enable_knowledge_base,
         )
         elapsed = time.time() - start
         total_words = sum(c.get("word_count", 0) for c in chapters)
@@ -626,6 +642,29 @@ def main():
              "Increases per-chapter LLM calls by 3-5x.",
     )
     parser.add_argument(
+        "--no-changes",
+        action="store_true",
+        help="Disable structured change declarations (---CHANGES--- blocks). "
+             "When enabled (default), the LLM must declare state transitions "
+             "after each chapter; when disabled, falls back to passive state extraction.",
+    )
+    parser.add_argument(
+        "--style-profile",
+        metavar="NAME",
+        help="Bind a named style profile to all drafted chapters "
+             "(profile must exist in styles/ directory of project dir)",
+    )
+    parser.add_argument(
+        "--auto-style-extract",
+        action="store_true",
+        help="Automatically extract and save a style profile after each chapter",
+    )
+    parser.add_argument(
+        "--no-knowledge-base",
+        action="store_true",
+        help="Disable lazy-loaded reference knowledge base for debate agents",
+    )
+    parser.add_argument(
         "--agents",
         action="store_true",
         help="Use multi-agent system (Showrunner + parallel Writer agents). "
@@ -758,6 +797,10 @@ def main():
                     enable_adversarial=not args.no_adversarial,
                     feedback_enabled=feedback_enabled if feedback_enabled is not None else True,
                     enable_debate=args.debate,
+                    enable_changes=not args.no_changes,
+                    enable_knowledge_base=not args.no_knowledge_base,
+                style_profile_name=args.style_profile,
+                auto_style_extract=args.auto_style_extract,
                 )
             else:
                 run_full_pipeline(
@@ -775,6 +818,10 @@ def main():
                     precompiled_spec=compiled_spec,
                     feedback_enabled=feedback_enabled if feedback_enabled is not None else True,
                     enable_debate=args.debate,
+                    enable_changes=not args.no_changes,
+                    enable_knowledge_base=not args.no_knowledge_base,
+                    style_profile_name=args.style_profile,
+                    auto_style_extract=args.auto_style_extract,
                 )
         return
 
@@ -834,6 +881,8 @@ def main():
                     enable_adversarial=not args.no_adversarial,
                     feedback_enabled=feedback_enabled if feedback_enabled is not None else True,
                     enable_debate=args.debate,
+                    enable_changes=not args.no_changes,
+                    enable_knowledge_base=not args.no_knowledge_base,
                 )
             else:
                 run_full_pipeline(
@@ -851,6 +900,10 @@ def main():
                     precompiled_spec=compiled_spec,
                     feedback_enabled=feedback_enabled if feedback_enabled is not None else True,
                     enable_debate=args.debate,
+                    enable_changes=not args.no_changes,
+                    enable_knowledge_base=not args.no_knowledge_base,
+                    style_profile_name=args.style_profile,
+                    auto_style_extract=args.auto_style_extract,
                 )
         return
 
@@ -874,6 +927,10 @@ def main():
             enable_adversarial=not args.no_adversarial,
             feedback_enabled=feedback_enabled if feedback_enabled is not None else False,
             enable_debate=args.debate,
+            enable_changes=not args.no_changes,
+            enable_knowledge_base=not args.no_knowledge_base,
+            style_profile_name=args.style_profile,
+            auto_style_extract=args.auto_style_extract,
         )
     else:
         run_full_pipeline(
@@ -891,6 +948,10 @@ def main():
             enable_reio=not args.no_reio,
             feedback_enabled=feedback_enabled if feedback_enabled is not None else False,
             enable_debate=args.debate,
+            enable_changes=not args.no_changes,
+            enable_knowledge_base=not args.no_knowledge_base,
+            style_profile_name=args.style_profile,
+            auto_style_extract=args.auto_style_extract,
         )
 
 
