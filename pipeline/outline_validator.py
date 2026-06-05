@@ -150,7 +150,11 @@ def _format_character_list(characters: dict) -> tuple[str, int]:
 
 
 def _format_outline_text(outline: dict) -> tuple[str, int]:
-    """Build a compact outline summary for the validator prompt."""
+    """Build a compact outline summary for the validator prompt.
+
+    Each chapter is compressed to ~120 chars to keep the full outline
+    within the validator model's context window (even for 30-chapter novels).
+    """
     acts = outline.get("acts", [])
     lines = []
     ch_count = 0
@@ -160,22 +164,22 @@ def _format_outline_text(outline: dict) -> tuple[str, int]:
         for ch in act.get("chapters", []):
             ch_num = ch.get("chapter", ch_count + 1)
             ch_count += 1
-            title = ch.get("title", f"Chapter {ch_num}")
+            title = ch.get("title", f"Ch{ch_num}")
             pov = ch.get("pov", "?")
-            summary = ch.get("summary", "")[:150]
+            summary = ch.get("summary", "")[:120]
             key_events = ch.get("key_events", [])
-            arc_beat = ch.get("character_arc_beat", "")[:100]
-            emo_arc = ch.get("emotional_arc", "")[:60]
-            fshadow = ch.get("foreshadowing", "")[:100]
-            lines.append(f"Ch{ch_num}: {title}")
-            lines.append(f"  POV={pov} | Emotional={emo_arc}")
-            lines.append(f"  Summary: {summary}")
+            emo_arc = ch.get("emotional_arc", "")[:40]
+            fshadow = ch.get("foreshadowing", "")[:80]
+            arc_beat = ch.get("character_arc_beat", "")[:80]
+            # Compact one-liner per chapter
+            parts = [f"Ch{ch_num} {title} | POV={pov} | {emo_arc} | {summary}"]
             if key_events:
-                lines.append(f"  Key Events: {', '.join(str(e) for e in key_events[:5])}")
-            if arc_beat:
-                lines.append(f"  Character Arc: {arc_beat}")
+                parts.append(f"  Events: {', '.join(str(e)[:40] for e in key_events[:4])}")
             if fshadow:
-                lines.append(f"  Foreshadowing: {fshadow}")
+                parts.append(f"  Foreshadow: {fshadow}")
+            if arc_beat:
+                parts.append(f"  Char Arc: {arc_beat}")
+            lines.append("\n".join(parts))
     return "\n".join(lines), ch_count
 
 
@@ -219,7 +223,7 @@ def run_outline_validator(
     """
     config = config or Config()
     client = CrofaiClient(config)
-    model = config.model_for_phase("scoring")  # cheap flash model
+    model = config.model_for_phase("outline_validator")  # deepseek-flash — enough context
 
     char_text, char_count = _format_character_list(characters)
     outline_text, chapter_count = _format_outline_text(outline)

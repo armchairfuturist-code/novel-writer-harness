@@ -134,6 +134,7 @@ class Config:
             "final_review": "deepseek",       # Full manuscript review — needs context
             "interview": "deepseek",          # Interactive Q&A — large context for conversation
             "interview_scoring": "flash",     # Thin-area detection — cheap and fast
+            "outline_validator": "deepseek-flash",  # Outline structural check — needs context
         }
 
         # --- Interview Task-to-Model Routing ---

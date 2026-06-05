@@ -963,6 +963,10 @@ def main():
 
     # Determine project directory
     project_slug = slugify(args.concept)[:40]
+    project_dir = os.path.join(
+        config.project_dir or os.path.join(os.path.expanduser("~"), "storyforge-projects"),
+        project_slug,
+    )
 
     if args.agents:
         run_showrunner_pipeline(

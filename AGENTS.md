@@ -57,3 +57,18 @@ Landing dir: `~/storyforge-projects/{slug}/`. Override with `--project-dir`. Con
 - All LLM calls go through `CrofaiClient.chat()` or `chat_with_retry()`. Phase modules never call httpx directly.
 - `test_e2e.py` imports and patches `sys.stdin` — it's the broadest coverage check.
 - README describes v0.3 features but is the source of truth for the feature set.
+
+
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs live as GitHub issues, managed via the GitHub MCP server. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Uses the five canonical triage roles with default label names. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout — one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
