@@ -59,6 +59,7 @@ from pipeline.factcheck import run_fact_check
 from pipeline.backprop import run_backward_propagation
 from pipeline.iterative_backprop import run_iterative_backpropagation
 from pipeline.adversarial_edit import run_adversarial_edit
+from pipeline.outline_validator import run_outline_validator, print_validation_report
 from pipeline.export import export_manuscript
 from interview.engine import run_interview
 from interview.story_bible import compile_story_bible
@@ -143,6 +144,7 @@ def run_full_pipeline(
     style_profile_name: Optional[str] = None,
     auto_style_extract: bool = False,
     enable_knowledge_base: bool = True,
+    enable_validate_outline: bool = True,
 ) -> str:
     """Run the full StoryForge pipeline from seed to export.
 
@@ -164,6 +166,7 @@ def run_full_pipeline(
         style_profile_name: Named style profile to bind to all chapters
         auto_style_extract: Auto-extract style profiles after each chapter
         enable_knowledge_base: Enable lazy-loaded reference knowledge for debate agents
+        enable_validate_outline: Run outline structural validation between phase 4 and 5
 
     Returns:
         str: Path to the project output directory
@@ -320,6 +323,32 @@ def run_full_pipeline(
         print(f"  Chapters: {sum(len(a.get('chapters', [])) for a in outline.get('acts', []))}\n")
 
     chapter_count = sum(len(a.get("chapters", [])) for a in outline.get("acts", []))
+
+    # ── Phase 4.5: Outline Validation ──
+    if "outline_validated" not in completed and enable_validate_outline:
+        print("=== Phase 4.5/7: Outline Validation ===")
+        start = time.time()
+        validation = run_outline_validator(spec, world, characters, outline, config)
+        print_validation_report(validation)
+        elapsed = time.time() - start
+        print(f"  Time: {elapsed:.1f}s\n")
+        # Save validation report
+        with open(os.path.join(project_dir, "outline_validation.json"), "w", encoding="utf-8") as f:
+            json.dump(validation, f, indent=2)
+        completed.add("outline_validated")
+        _save_checkpoint(project_dir, completed)
+        # FAIL blocks the pipeline
+        if validation.get("overall") == "FAIL":
+            print("  ⛔ Drafting BLOCKED — outline validation FAILED. Fix the issues above and re-run.")
+            print(f"     See {os.path.join(project_dir, 'outline_validation.json')} for details.\n")
+            return project_dir
+    elif "outline_validated" in completed:
+        print("=== Phase 4.5/7: Outline Validation === [cached]")
+        vp = os.path.join(project_dir, "outline_validation.json")
+        if os.path.exists(vp):
+            with open(vp, "r") as f:
+                cached = json.load(f)
+            print(f"  Result: {cached.get('overall', '?')}\n")
 
     # ── Phase 5: Draft ──
     if "draft" not in completed:
@@ -676,6 +705,11 @@ def main():
         help="Disable lazy-loaded reference knowledge base for debate agents",
     )
     parser.add_argument(
+        "--no-validate-outline",
+        action="store_true",
+        help="Skip outline structural validation between outline generation and drafting",
+    )
+    parser.add_argument(
         "--agents",
         action="store_true",
         help="Use multi-agent system (Showrunner + parallel Writer agents). "
@@ -812,6 +846,7 @@ def main():
                     enable_knowledge_base=not args.no_knowledge_base,
                 style_profile_name=args.style_profile,
                 auto_style_extract=args.auto_style_extract,
+                enable_validate_outline=not args.no_validate_outline,
                 )
             else:
                 run_full_pipeline(
@@ -833,6 +868,7 @@ def main():
                     enable_knowledge_base=not args.no_knowledge_base,
                     style_profile_name=args.style_profile,
                     auto_style_extract=args.auto_style_extract,
+                enable_validate_outline=not args.no_validate_outline,
                 )
         return
 
@@ -915,6 +951,7 @@ def main():
                     enable_knowledge_base=not args.no_knowledge_base,
                     style_profile_name=args.style_profile,
                     auto_style_extract=args.auto_style_extract,
+                enable_validate_outline=not args.no_validate_outline,
                 )
         return
 
@@ -942,6 +979,7 @@ def main():
             enable_knowledge_base=not args.no_knowledge_base,
             style_profile_name=args.style_profile,
             auto_style_extract=args.auto_style_extract,
+            enable_validate_outline=not args.no_validate_outline,
         )
     else:
         run_full_pipeline(
@@ -963,6 +1001,7 @@ def main():
             enable_knowledge_base=not args.no_knowledge_base,
             style_profile_name=args.style_profile,
             auto_style_extract=args.auto_style_extract,
+            enable_validate_outline=not args.no_validate_outline,
         )
 
 
