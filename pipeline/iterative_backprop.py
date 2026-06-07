@@ -98,6 +98,7 @@ def _apply_backprop_fixes(
     client.close()
     return chapters_revised
 def run_iterative_backpropagation(
+    chapters_dir: str,
     project_dir: str,
     outline_path: str = "",
     max_iterations: int = 3,
@@ -109,8 +110,11 @@ def run_iterative_backpropagation(
     Tracks issue reduction per iteration to measure convergence.
 
     Args:
-        project_dir: Project directory containing chapters/
-        outline_path: Path to outline.json
+        chapters_dir: Path to the directory containing chapter .md files.
+        project_dir: Output sink — used only to write per-iteration
+            ``backprop-revision-iter-N.json`` reports. Pass ``""`` to skip
+            writing reports.
+        outline_path: Absolute or caller-resolved path to ``outline.json``.
         max_iterations: Maximum convergence loops
         config: Optional Config
 
@@ -118,7 +122,6 @@ def run_iterative_backpropagation(
         dict: Comprehensive report with iteration history
     """
     config = config or Config()
-    chapters_dir = os.path.join(project_dir, "chapters")
     if not os.path.isdir(chapters_dir):
         return {
             "status": "SKIPPED",
@@ -127,11 +130,7 @@ def run_iterative_backpropagation(
             "total_issues_final": 0,
         }
 
-    # Resolve outline path
-    if outline_path:
-        o_path = outline_path if os.path.isabs(outline_path) else os.path.join(project_dir, outline_path)
-    else:
-        o_path = os.path.join(project_dir, "outline.json")
+    o_path = outline_path
 
     iteration_history = []
     all_issues_by_iter = []
@@ -183,10 +182,11 @@ def run_iterative_backpropagation(
             "instructions": instructions,
             "issues_before": len(all_issues),
         }
-        rev_path = os.path.join(project_dir, f"backprop-revision-iter-{iteration + 1}.json")
-        with open(rev_path, "w", encoding="utf-8") as f:
-            json.dump(rev_plan, f, indent=2)
-        print(f"      Revision plan saved to {rev_path}")
+        if project_dir:
+            rev_path = os.path.join(project_dir, f"backprop-revision-iter-{iteration + 1}.json")
+            with open(rev_path, "w", encoding="utf-8") as f:
+                json.dump(rev_plan, f, indent=2)
+            print(f"      Revision plan saved to {rev_path}")
 
         # Apply fixes to chapter files via LLM (always — even on last iteration)
         chapters_revised = _apply_backprop_fixes(

@@ -422,9 +422,10 @@ def run_full_pipeline(
         print()
 
     # ── Fact-Check ──
+    chapters_dir = os.path.join(project_dir, "chapters")
     if "draft" in completed and not quick:
         print("=== Fact-Check: Consistency Scan ===")
-        fc_report = run_fact_check(project_dir)
+        fc_report = run_fact_check(chapters_dir)
         if fc_report["status"] == "SKIPPED":
             print(f"  {fc_report['reason']}\n")
         else:
@@ -445,12 +446,13 @@ def run_full_pipeline(
         if iterative_backprop:
             print(f"  Mode: ITERATIVE (up to {config.scoring.max_full_review_rounds} iterations)")
             bp_report = run_iterative_backpropagation(
+                chapters_dir,
                 project_dir,
                 max_iterations=config.scoring.max_full_review_rounds,
             )
         else:
             print("  Mode: ONE-SHOT")
-            bp_report = run_backward_propagation(project_dir)
+            bp_report = run_backward_propagation(chapters_dir, outline_path)
 
         elapsed = time.time() - start
         print(f"  Status: {bp_report['status']}")
@@ -479,7 +481,7 @@ def run_full_pipeline(
     if "adversarial" not in completed and not quick and enable_adversarial:
         print("=== Adversarial Editing: Tightening Prose ===")
         start = time.time()
-        ae_report = run_adversarial_edit(project_dir, config)
+        ae_report = run_adversarial_edit(chapters_dir, config)
         elapsed = time.time() - start
         if ae_report["status"] != "SKIPPED":
             print(f"  Total words removed: {ae_report.get('total_words_removed', 0)} "
@@ -499,7 +501,7 @@ def run_full_pipeline(
         persona_mode = "dual-persona" if dual_review else "single"
         print(f"  Review mode: {persona_mode}")
         start = time.time()
-        review = run_full_review(chapters, project_dir, config, dual_persona=dual_review)
+        review = run_full_review(chapters, config, dual_persona=dual_review)
         elapsed = time.time() - start
         print(f"  Overall score: {review.get('overall_avg_score', 'N/A')}/10")
         print(f"  Weakest chapter: Ch {review.get('weakest_chapter', '?')} ({review.get('weakest_score', '?')}/10)")

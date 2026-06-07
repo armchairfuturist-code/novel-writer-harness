@@ -360,19 +360,19 @@ def generate_revision_instructions(issues: list[dict]) -> str:
 
 
 def run_backward_propagation(
-    project_dir: str,
+    chapters_dir: str,
     outline_path: str = "",
 ) -> dict:
     """Run all backward propagation scans and produce a report.
 
     Args:
-        project_dir: Project directory containing chapters/
-        outline_path: Path to outline.json for foreshadowing data
+        chapters_dir: Path to the directory containing chapter .md files.
+        outline_path: Path to outline.json for foreshadowing data. Pass an
+            absolute path or one resolved by the caller.
 
     Returns:
         dict: Report with issues and revision instructions
     """
-    chapters_dir = os.path.join(project_dir, "chapters")
     if not os.path.isdir(chapters_dir):
         return {
             "status": "SKIPPED",
@@ -383,11 +383,7 @@ def run_backward_propagation(
     all_issues = scan_forward_inconsistencies(chapters_dir)
 
     # Also scan foreshadowing if outline available
-    if outline_path:
-        o_path = outline_path if os.path.isabs(outline_path) else os.path.join(project_dir, outline_path)
-    else:
-        o_path = os.path.join(project_dir, "outline.json")
-    all_issues.extend(scan_foreshadowing_debt(chapters_dir, o_path))
+    all_issues.extend(scan_foreshadowing_debt(chapters_dir, outline_path or ""))
 
     errors = [i for i in all_issues if i["severity"] == "FAIL"]
     warnings = [i for i in all_issues if i["severity"] == "WARN"]

@@ -233,15 +233,15 @@ def run_dual_persona_review(
 
 def run_full_review(
     chapters: list[dict],
-    project_dir: str,
     config: Optional[Config] = None,
     dual_persona: bool = True,
 ) -> dict:
     """Run full manuscript review with optional dual-persona critique.
 
     Args:
-        chapters: List of chapter result dicts
-        project_dir: Project directory
+        chapters: List of chapter result dicts. Each entry must contain
+            ``chapter``, ``title``, and ``file`` (absolute path to the
+            chapter .md file). Chapter text is read from disk per entry.
         config: Config override
         dual_persona: If True, use dual-persona review (2x tokens, better quality)
 

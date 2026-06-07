@@ -292,20 +292,20 @@ class TestIterativeBackprop(unittest.TestCase):
         # Remove chapters directory to trigger SKIPPED
         import shutil
         shutil.rmtree(self.chapters_dir)
-        result = run_iterative_backpropagation(self.temp_dir, self.outline_path)
+        result = run_iterative_backpropagation(self.chapters_dir, self.temp_dir, self.outline_path)
         self.assertEqual(result["status"], "SKIPPED")
 
     def test_converges_on_clean_chapters(self):
         self._write_chapter(1, "Chapter one text. Blue eyes. Morning.")
         self._write_chapter(2, "Chapter two text. Blue eyes. Afternoon.")
-        result = run_iterative_backpropagation(self.temp_dir, self.outline_path)
+        result = run_iterative_backpropagation(self.chapters_dir, self.temp_dir, self.outline_path)
         self.assertIn(result["status"], ["PASS", "STALLED", "FAIL"])
 
     def test_iteration_tracking(self):
         self._write_chapter(1, "Blue eyes. Morning. Chapter one.")
         self._write_chapter(2, "Brown eyes. Night. Chapter two.")
         result = run_iterative_backpropagation(
-            self.temp_dir, self.outline_path, max_iterations=2
+            self.chapters_dir, self.temp_dir, self.outline_path, max_iterations=2
         )
         self.assertGreaterEqual(result["iterations"], 1)
         self.assertIn("iteration_history", result)

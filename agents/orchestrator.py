@@ -492,23 +492,13 @@ def run_showrunner_pipeline(
         # Build writer tasks with context
         writer_tasks = []
         for brief in chapter_briefs:
-            # Build retrieved context from written chapters
+            # Build retrieved context from written chapters.
+            # NOTE: BM25Retriever was removed (see pipeline/draft.py); the
+            # orchestrator's per-batch in-memory reindex pattern didn't map
+            # trivially onto EmbeddingStore (which persists chunks and is
+            # owned by the drafting phase). The canonical context below
+            # remains the primary context source for the writer tasks.
             retrieved_context = ""
-            if written_chapter_meta:
-                from pipeline.draft import BM25Retriever
-                retriever = BM25Retriever()
-                retriever.index(written_chapter_meta)
-                query = f"{brief['summary']} {brief['emotional_arc']} {brief['pov']}"
-                relevant = retriever.search(query, k=3, exclude_chapters=set())
-                if relevant:
-                    lines = []
-                    for rc in relevant:
-                        for wc in written_chapter_meta:
-                            if wc.get("chapter") == rc["chapter"]:
-                                lines.append(f"  - Ch {rc['chapter']}: {wc.get('summary', '')[:200]}")
-                                break
-                    if lines:
-                        retrieved_context = "Related story elements:\n" + "\n".join(lines)
 
             # Canonical state context
             canonical_context = canonical_store.format_context_for_drafting(

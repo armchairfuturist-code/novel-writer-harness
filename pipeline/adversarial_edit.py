@@ -183,7 +183,7 @@ def _categorize_cuts(cuts: list[dict]) -> dict:
 
 
 def run_adversarial_edit(
-    project_dir: str,
+    chapters_dir: str,
     config: Optional[Config] = None,
     target_cut_pct: float = 0.15,
     edit_all: bool = True,
@@ -191,7 +191,8 @@ def run_adversarial_edit(
     """Run adversarial editing on all chapters in a project.
 
     Args:
-        project_dir: Project directory containing chapters/
+        chapters_dir: Path to the directory containing chapter .md files.
+            Edited chapter files are written back in place.
         config: Config override
         target_cut_pct: Target cut percentage
         edit_all: If True, edit all chapters. If False, only score + report.
@@ -203,7 +204,6 @@ def run_adversarial_edit(
     client = CrofaiClient(config)
     model = config.model_for_phase("draft")  # Use drafting model for editing
 
-    chapters_dir = os.path.join(project_dir, "chapters")
     if not os.path.isdir(chapters_dir):
         return {
             "status": "SKIPPED",

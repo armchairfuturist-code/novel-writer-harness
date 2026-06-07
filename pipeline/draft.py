@@ -3,16 +3,14 @@
 Key improvements over v0.1:
 - Revision loop: score < threshold -> revise with LLM critique -> re-score (up to 3 rounds)
 - Parallel variants: draft 2-3 versions with distinct style profiles, score each, keep best
-- RAG context retrieval: BM25-based semantic retrieval replaces naive last-N window
+- RAG context retrieval: semantic embedding store replaces naive last-N window
 - Token tracking: estimates tokens per chapter/phase for cost visibility
 """
 
 import json
-import math
 import os
 import re
 import time
-from collections import Counter
 from typing import Optional
 
 from config import Config
@@ -161,116 +159,6 @@ def _get_chapter_text(chapter_file: str) -> str:
         return "\n".join(filtered)
     except OSError:
         return ""
-
-
-# ---------------------------------------------------------------------------
-# Lightweight BM25 Retriever (no external dependencies)
-# ---------------------------------------------------------------------------
-
-class BM25Retriever:
-    """Pure-Python BM25 for chapter context retrieval.
-
-    Builds an index from chapter summaries, retrieves the k most relevant
-    chapters for a given query. No external dependencies.
-    """
-
-    def __init__(self, k1: float = 1.5, b: float = 0.75):
-        self.k1 = k1
-        self.b = b
-        self._docs: list[dict] = []
-        self._doc_freq: Counter = Counter()
-        self._total_docs = 0
-        self._avg_dl = 0.0
-
-    def index(self, chapters: list[dict]):
-        """Build BM25 index from chapter metadata.
-
-        Args:
-            chapters: List of chapter dicts with 'summary', 'chapter', 'title' keys.
-        """
-        self._docs = []
-        all_terms = []
-        doc_lengths = []
-
-        for ch in chapters:
-            text = f"{ch.get('summary', '')} {ch.get('title', '')} {ch.get('pov', '')} {ch.get('key_events', '')}"
-            if isinstance(text, list):
-                text = " ".join(text)
-            doc_text = text.lower()
-            terms = self._tokenize(doc_text)
-            self._docs.append({
-                "chapter": ch.get("chapter", 0),
-                "title": ch.get("title", ""),
-                "terms": terms,
-                "raw": doc_text,
-            })
-            all_terms.extend(terms)
-            doc_lengths.append(len(terms))
-
-        # Count unique terms per doc for IDF
-        self._doc_freq: Counter = Counter()
-        for doc in self._docs:
-            unique_terms = set(doc["terms"])
-            for t in unique_terms:
-                self._doc_freq[t] += 1
-
-        self._total_docs = len(self._docs)
-        self._avg_dl = sum(doc_lengths) / max(len(doc_lengths), 1)
-
-    def _tokenize(self, text: str) -> list[str]:
-        """Tokenize text into terms."""
-        return re.findall(r'\b[a-z0-9]{3,}\b', text.lower())
-
-    def search(self, query: str, k: int = 3, exclude_chapters: set = None) -> list[dict]:
-        """Retrieve top-k relevant chapters for a query.
-
-        Args:
-            query: Search query (outline summary, character name, etc.)
-            k: Number of results to return
-            exclude_chapters: Set of chapter numbers to exclude
-
-        Returns:
-            List of dicts with 'chapter', 'title', 'score' keys, sorted by score desc
-        """
-        if not self._docs:
-            return []
-
-        query_terms = self._tokenize(query)
-        if not query_terms:
-            return []
-
-        exclude_chapters = exclude_chapters or set()
-        scores = []
-
-        for doc in self._docs:
-            ch_num = doc["chapter"]
-            if ch_num in exclude_chapters:
-                continue
-
-            score = 0.0
-            doc_len = len(doc["terms"])
-            for qt in query_terms:
-                if qt not in self._doc_freq:
-                    continue
-                # Term frequency in this document
-                tf = sum(1 for t in doc["terms"] if t == qt)
-                if tf == 0:
-                    continue
-                # IDF
-                idf = math.log((self._total_docs - self._doc_freq[qt] + 0.5) /
-                               (self._doc_freq[qt] + 0.5) + 1.0)
-                # BM25 scoring
-                score += idf * (tf * (self.k1 + 1)) / \
-                    (tf + self.k1 * (1 - self.b + self.b * doc_len / self._avg_dl))
-
-            scores.append({
-                "chapter": ch_num,
-                "title": doc["title"],
-                "score": round(score, 4),
-            })
-
-        scores.sort(key=lambda x: -x["score"])
-        return scores[:k]
 
 
 # ---------------------------------------------------------------------------
@@ -692,8 +580,7 @@ def run_draft(
     if canonical_store is not None:
         canonical = canonical_store
     else:
-        project_slug = os.path.basename(project_dir)
-        canonical = create_canonical_store(store_type="file", project_id=project_slug)
+        canonical = create_canonical_store(backend="file", project_dir=project_dir)
     canonical.ensure_bank_safe()
 
     # Initialize ReIO compression

@@ -551,7 +551,11 @@ def create_canonical_store(
 
     Args:
         backend:
-            file (default, zero-dependency JSON store).
+            One of:
+              - "file" (default, zero-dependency JSON store).
+              - "hindsight" (HTTP-backed Hindsight memory bank).
+              - "gbrain" (HTTP-backed GBrain memory bank).
+              - "auto" (probe GBrain, then Hindsight, then file).
             Empty string checks the STORYFORGE_CANONICAL_STORE env var.
         project_dir: Project root directory.
         enabled: Whether the store is active.
@@ -574,7 +578,30 @@ def create_canonical_store(
         backend = os.environ.get("STORYFORGE_CANONICAL_STORE", "file")
 
     norm = backend.strip().lower()
-    if norm == "file" or not norm:
+    if not norm or norm == "file":
+        return FileCanonicalStore(project_dir=project_dir, enabled=enabled)
+
+    if norm == "hindsight":
+        from pipeline.hindsight_client import HindsightStore
+        project_id = os.path.basename(project_dir.rstrip("/")) or "storyforge"
+        return HindsightStore(project_id=project_id, enabled=enabled)
+
+    if norm == "gbrain":
+        from pipeline.gbrain_client import GBrainStore
+        project_id = os.path.basename(project_dir.rstrip("/")) or "storyforge"
+        return GBrainStore(project_id=project_id, enabled=enabled)
+
+    if norm == "auto":
+        from pipeline.gbrain_client import GBrainStore
+        from pipeline.hindsight_client import HindsightStore
+        project_id = os.path.basename(project_dir.rstrip("/")) or "storyforge"
+        for cls in (GBrainStore, HindsightStore):
+            try:
+                candidate = cls(project_id=project_id, enabled=enabled)
+                if candidate.ensure_bank_safe():
+                    return candidate
+            except Exception:
+                continue
         return FileCanonicalStore(project_dir=project_dir, enabled=enabled)
 
     # Custom dotted-path backend (e.g. "myplugin.store.MyStore")
@@ -588,7 +615,8 @@ def create_canonical_store(
 
     msg = (
         f"Unknown canonical store backend {backend!r}. "
-        f"Use 'file' for the stdlib file-backed store, or set "
+        f"Use 'file' for the stdlib file-backed store, 'hindsight' or "
+        f"'gbrain' for the HTTP-backed stores, or set "
         f"STORYFORGE_CANONICAL_STORE to a dotted path to your "
         f"CanonicalStore subclass."
     )

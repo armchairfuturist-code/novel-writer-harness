@@ -347,16 +347,15 @@ def scan_backstory_consistency(chapters_dir: str, characters: dict = None) -> li
 
     return issues
 
-def run_fact_check(project_dir: str) -> dict:
+def run_fact_check(chapters_dir: str) -> dict:
     """Run all fact-checking scans and produce a report.
 
     Args:
-        project_dir: Project output directory containing chapters/
+        chapters_dir: Path to the directory containing chapter .md files.
 
     Returns:
         dict: Fact-check report with per-scanner results and summary
     """
-    chapters_dir = os.path.join(project_dir, "chapters")
     if not os.path.isdir(chapters_dir):
         return {
             "status": "SKIPPED",

@@ -26,12 +26,17 @@ from typing import Optional
 
 import httpx
 
+from pipeline.canonical_store import (
+    CanonicalStore,
+    _FORESHADOWING_TRANSITIONS,
+)
+
 
 HINDSIGHT_BASE = os.environ.get("HINDSIGHT_URL", "http://localhost:8888")
 HINDSIGHT_BANK_PREFIX = "storyforge-"
 
 
-class HindsightStore:
+class HindsightStore(CanonicalStore):
     """Structured state store backed by Hindsight memory banks.
 
     Uses one Hindsight bank per novel project. Each bank stores:
@@ -324,6 +329,41 @@ class HindsightStore:
                 "status": "paid",
                 "entity_type": "foreshadowing",
             },
+        )
+
+    def mark_foreshadowing_progress(self, element: str, new_status: str, chapter: int):
+        """Record a status transition for a foreshadowing element."""
+        if new_status not in _FORESHADOWING_TRANSITIONS:
+            raise ValueError(
+                f"Unknown foreshadowing status {new_status!r}. "
+                f"Valid: {sorted(_FORESHADOWING_TRANSITIONS.keys())}"
+            )
+        self.store_memory(
+            content=(
+                f"Foreshadowing '{element}' status={new_status} "
+                f"(updated Ch {chapter})"
+            ),
+            tags=["foreshadowing", new_status, element.lower()],
+            importance=0.6,
+            metadata={
+                "element": element,
+                "status": new_status,
+                "chapter": chapter,
+                "entity_type": "foreshadowing",
+            },
+        )
+
+    def get_foreshadowing_by_status(self, status: str) -> list[dict]:
+        """Return all foreshadowing entries with a given status."""
+        if status not in _FORESHADOWING_TRANSITIONS:
+            raise ValueError(
+                f"Unknown foreshadowing status {status!r}. "
+                f"Valid: {sorted(_FORESHADOWING_TRANSITIONS.keys())}"
+            )
+        return self.recall(
+            f"foreshadowing status {status}",
+            k=50,
+            tag_filter=["foreshadowing", status],
         )
 
     def record_chapter_summary(

@@ -1,4 +1,4 @@
-"""Unit tests for the ChapterScorer, BM25Retriever, and API client modules."""
+"""Unit tests for the ChapterScorer, API client, and token-estimation modules."""
 
 import json
 import os
@@ -9,7 +9,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from config import Config
-from pipeline.draft import ChapterScorer, BM25Retriever, _estimate_tokens, _word_count, _get_chapter_text
+from pipeline.draft import ChapterScorer, _estimate_tokens, _word_count, _get_chapter_text
 from pipeline.draft import _generate_revision_prompt
 
 
@@ -86,57 +86,6 @@ class TestChapterScorer(unittest.TestCase):
         score = self.scorer.score_chapter("")
         self.assertEqual(score["word_count"], 0)
         self.assertGreaterEqual(score["total_score"], 5.0)
-
-
-class TestBM25Retriever(unittest.TestCase):
-    """Test the BM25 context retrieval module."""
-
-    def setUp(self):
-        self.retriever = BM25Retriever()
-        self.chapters = [
-            {"chapter": 1, "title": "The Arrival", "summary": "Maria arrives in the rain-soaked city. She meets the detective.", "pov": "Maria", "key_events": ["Arrival", "Meeting detective"]},
-            {"chapter": 2, "title": "The Photograph", "summary": "A photograph reveals a hidden connection. The detective follows a lead to the docks.", "pov": "Detective", "key_events": ["Photo discovery", "Docks investigation"]},
-            {"chapter": 3, "title": "The Warehouse", "summary": "A chase through an abandoned warehouse. Maria finds evidence of a conspiracy.", "pov": "Maria", "key_events": ["Chase scene", "Evidence discovery"]},
-            {"chapter": 4, "title": "The Interrogation", "summary": "The suspect is interrogated. Secrets about the murder weapon emerge.", "pov": "Detective", "key_events": ["Interrogation", "Weapon revelation"]},
-            {"chapter": 5, "title": "The Escape", "summary": "The killer escapes custody. Maria must track them alone through the underground.", "pov": "Maria", "key_events": ["Escape", "Underground pursuit"]},
-        ]
-
-    def test_index_and_search(self):
-        self.retriever.index(self.chapters)
-        results = self.retriever.search("interrogation suspect weapon")
-        self.assertGreater(len(results), 0)
-        self.assertEqual(results[0]["chapter"], 4)
-
-    def test_search_returns_relevant_chapters(self):
-        self.retriever.index(self.chapters)
-        results = self.retriever.search("rain arrival docks conspiracy")
-        self.assertGreater(len(results), 0)
-
-    def test_search_excludes_chapters(self):
-        self.retriever.index(self.chapters)
-        results = self.retriever.search("interrogation suspect weapon", exclude_chapters={4})
-        if results:
-            self.assertNotEqual(results[0]["chapter"], 4)
-
-    def test_search_empty_index(self):
-        empty = BM25Retriever()
-        results = empty.search("anything")
-        self.assertEqual(results, [])
-
-    def test_search_empty_query(self):
-        self.retriever.index(self.chapters)
-        results = self.retriever.search("")
-        self.assertEqual(results, [])
-
-    def test_score_structure(self):
-        self.retriever.index(self.chapters)
-        results = self.retriever.search("detective docks", k=2)
-        self.assertLessEqual(len(results), 2)
-        for r in results:
-            self.assertIn("chapter", r)
-            self.assertIn("title", r)
-            self.assertIn("score", r)
-            self.assertIsInstance(r["score"], float)
 
 
 class TestRevisionPrompt(unittest.TestCase):

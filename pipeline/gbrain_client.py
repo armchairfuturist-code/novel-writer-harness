@@ -26,12 +26,17 @@ from typing import Optional
 
 import httpx
 
+from pipeline.canonical_store import (
+    CanonicalStore,
+    _FORESHADOWING_TRANSITIONS,
+)
+
 
 GBRAIN_BASE = os.environ.get("GBRAIN_URL", "http://localhost:8888")
 GBRAIN_BANK_PREFIX = "storyforge-"
 
 
-class GBrainStore:
+class GBrainStore(CanonicalStore):
     """Structured state store backed by GBrain memory banks.
 
     Uses one GBrain bank per novel project. Each bank stores:
@@ -194,6 +199,31 @@ class GBrainStore:
             tags=["foreshadowing", "paid", element.lower()],
             importance=0.5,
             metadata={"element": element, "payoff_chapter": payoff_chapter, "status": "paid", "entity_type": "foreshadowing"},
+        )
+
+    def mark_foreshadowing_progress(self, element: str, new_status: str, chapter: int):
+        if new_status not in _FORESHADOWING_TRANSITIONS:
+            raise ValueError(
+                f"Unknown foreshadowing status {new_status!r}. "
+                f"Valid: {sorted(_FORESHADOWING_TRANSITIONS.keys())}"
+            )
+        self.store_memory(
+            content=f"Foreshadowing '{element}' status={new_status} (updated Ch {chapter})",
+            tags=["foreshadowing", new_status, element.lower()],
+            importance=0.6,
+            metadata={"element": element, "status": new_status, "chapter": chapter, "entity_type": "foreshadowing"},
+        )
+
+    def get_foreshadowing_by_status(self, status: str) -> list[dict]:
+        if status not in _FORESHADOWING_TRANSITIONS:
+            raise ValueError(
+                f"Unknown foreshadowing status {status!r}. "
+                f"Valid: {sorted(_FORESHADOWING_TRANSITIONS.keys())}"
+            )
+        return self.recall(
+            f"foreshadowing status {status}",
+            k=50,
+            tag_filter=["foreshadowing", status],
         )
 
     def record_chapter_summary(self, chapter: int, title: str, summary: str, pov: str, word_count: int, key_events: list[str]):
