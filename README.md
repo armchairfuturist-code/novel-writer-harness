@@ -80,12 +80,7 @@ Inspired by [AI-Novel-Writing-Assistant](https://github.com/ExplosiveCoderflome/
 
 Each file is 50-200 lines of specific advice with examples, tagged with YAML frontmatter for keyword-based relevance matching. The `KnowledgeBase` class scores files by overlap with chapter context and returns only the best matches within a token budget.
 
-```bash
-python storyforge.py "concept" --debate            # knowledge base on by default
-python storyforge.py "concept" --no-knowledge-base  # disable reference injection
-```
-
-The lazy-loaded pattern adapts [oh-story-claudecode](https://github.com/worldwonderer/oh-story-claudecode)'s 100+ agent reference file architecture.
+**Semantic rescue:** the `ctx_keywords` extracted from chapter content (title words + top-10 most-frequent content words) often use prose vocabulary that doesn't literally match a file's abstract frontmatter keywords. A `KEYWORD_SYNONYMS` map in `pipeline/knowledge_base.py` bridges the gap (e.g. `scar → {trait, physical, description}` so a chapter about "Mira's scar" surfaces `character-trait-tracking.md` instead of returning an empty reference). Without the rescue, ~29% of chapter critiques would have run with no writing-theory context; with it, that gap is closed without changing the agent's interface. See `reference/knowledge/README.md` for retrieval semantics and how to extend the synonym map.
 
 ### v0.4: Triadic Constraint Debate Protocol (SGDD) — opt-in with `--debate`
 
@@ -334,7 +329,7 @@ pip install pytest
 pytest tests/ -v
 ```
 
-448+ tests covering: all pipeline phases, debate court (3 agents + cross-examination), change declarations (parse, apply, format), style engine (extraction, profiles, comparison), knowledge base (load, match, cap), outline validator (formatting, all 5 dimensions), canonical store (7-state foreshadowing machine, ABC contract), rhetorical strategies, scoring mechanics, BM25 retrieval, revision prompt generation, backpropagation, adversarial editing, ReIO compression, iterative backprop, genre templates, and CLI argument parsing.
+459+ tests covering: all pipeline phases, debate court (3 agents + cross-examination), change declarations (parse, apply, format), style engine (extraction, profiles, comparison), knowledge base (load, match, cap, semantic-rescue), outline validator (formatting, all 5 dimensions), canonical store (7-state foreshadowing machine, ABC contract), rhetorical strategies, scoring mechanics, BM25 retrieval, revision prompt generation, backpropagation, adversarial editing, ReIO compression, iterative backprop, genre templates, an...
 
 ---
 

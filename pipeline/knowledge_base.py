@@ -77,18 +77,106 @@ def _count_tokens(text: str) -> int:
     return len(text) // 4
 
 
+# ── Synonym expansion (semantic rescue) ────────────────────────────
+# Bridges the gap between chapter-content prose and the abstract writing-
+# craft vocabulary used in KB frontmatter. When ctx_keywords extracted
+# from a chapter (scar, hand, fire, flat, smell) have zero literal
+# overlap with a file's keywords (trait, physical, description, sensory,
+# immersion), synonym expansion lets the right file surface instead of
+# returning an empty reference block.
+#
+# Curated from the actual reference/knowledge/ corpus + common writing-
+# craft terminology. This is a deterministic, dependency-free lower bound
+# on what an embedding model would do; the file list is small and the
+# domain is constrained, so hand-curated maps beat generic embeddings
+# for cost. Extend by appending to KEYWORD_SYNONYMS — values are LOWER
+# CASE and must match existing frontmatter keywords.
+KEYWORD_SYNONYMS: dict[str, set[str]] = {
+    # Lore Prosecutor: character trait continuity
+    "scar": {"trait", "physical", "description", "consistency", "drift"},
+    "wound": {"trait", "physical", "description", "wounds"},
+    "wounds": {"trait", "physical", "description"},
+    "hand": {"trait", "physical", "description"},
+    "injury": {"trait", "physical", "description", "wounds"},
+    "mark": {"trait", "physical", "description"},
+    "eye": {"trait", "physical", "description"},
+    "hair": {"trait", "physical", "description"},
+    "mira": {"character", "trait"},
+    "protagonist": {"character", "trait"},
+    "heroine": {"character", "trait"},
+    # Lore Prosecutor: timeline / worldbuilding
+    "fire": {"event", "sequence", "timeline", "rules"},
+    "war": {"event", "sequence", "timeline"},
+    "battle": {"event", "sequence", "timeline"},
+    "flashback": {"timeline", "chronology", "sequence", "time"},
+    "magic": {"world", "rules", "system", "violation", "magic system"},
+    "system": {"world", "rules", "violation", "magic system"},
+    "mage": {"world", "rules", "violation", "magic system"},
+    # Plot Sentinel: structure / payoffs
+    "foreshadow": {"foreshadowing", "payoff", "setup", "plant", "resolve"},
+    "dagger": {"foreshadowing", "payoff", "setup", "plant"},
+    "sword": {"foreshadowing", "payoff", "setup", "plant"},
+    "planted": {"foreshadowing", "payoff", "setup", "plant"},
+    "pacing": {"rhythm", "tension", "momentum", "drag", "scene", "length"},
+    "dragging": {"pacing", "drag", "tension", "momentum"},
+    "rhythm": {"pacing", "tension", "momentum"},
+    "momentum": {"pacing", "tension", "drag"},
+    "outline": {"outline", "beat", "milestone", "requirement", "compliance", "goal"},
+    "beats": {"outline", "beat", "milestone"},
+    "milestone": {"outline", "beat", "compliance"},
+    # Drafting: hook / dialogue / sensory
+    "hook": {"hook", "cliffhanger", "suspense", "engagement"},
+    "opening": {"hook", "cliffhanger", "chapter"},
+    "grab": {"hook", "engagement", "attention"},
+    "cliffhanger": {"hook", "suspense", "engagement"},
+    "dialogue": {"dialogue", "conversation", "speech", "voice", "subtext", "distinctive"},
+    "sound": {"dialogue", "voice", "speech"},
+    "voice": {"dialogue", "speech", "distinctive", "character voice"},
+    "sensory": {"sensory", "immersion", "description", "physical", "detail", "senses"},
+    "texture": {"sensory", "immersion", "description", "physical", "detail"},
+    "flat": {"sensory", "immersion", "description"},
+    "smell": {"sensory", "immersion", "description"},
+    "hear": {"sensory", "immersion", "description"},
+    "smells": {"sensory", "immersion", "description"},
+    "hears": {"sensory", "immersion", "description"},
+    "taste": {"sensory", "immersion", "description"},
+    "touch": {"sensory", "immersion", "description", "physical"},
+    "feel": {"sensory", "immersion", "description", "physical"},
+    "feels": {"sensory", "immersion", "description", "physical"},
+    # Magistrate: revision quality
+    "critique": {"revision", "instruction", "actionable", "edit", "fix"},
+    "feedback": {"revision", "instruction", "actionable"},
+    "vague": {"revision", "instruction", "actionable"},
+    "specific": {"revision", "instruction", "actionable"},
+}
+
+
+def _expand_keywords(words: set[str]) -> set[str]:
+    """Expand a keyword set via KEYWORD_SYNONYMS. Returns input ∪ synonyms."""
+    out = set(words)
+    for w in words:
+        out |= KEYWORD_SYNONYMS.get(w, set())
+    return out
+
+
 def _word_overlap_score(query_keywords: list[str], file_keywords: list[str]) -> float:
-    """Score a file by keyword overlap with the query."""
+    """Score a file by keyword overlap with the query, with synonym rescue.
+
+    Pure literal Jaccard (|Q ∩ F| / |Q|) misses when chapter prose uses
+    different words than the file's frontmatter (scar/hand vs.
+    trait/physical/description). Synonym expansion via KEYWORD_SYNONYMS
+    bridges that gap; the denominator stays |Q| so scores remain
+    comparable across queries and the rescuer doesn't inflate rank.
+    """
     if not query_keywords or not file_keywords:
         return 0.0
     query_set = set(k.lower() for k in query_keywords)
     file_set = set(k.lower() for k in file_keywords)
-    overlap = query_set & file_set
+    expanded = _expand_keywords(query_set)
+    overlap = expanded & file_set
     if not overlap:
         return 0.0
-    # Jaccard-like: how much of the query is covered
     return len(overlap) / len(query_set)
-
 
 # ── KnowledgeBase ─────────────────────────────────────────────────────
 
