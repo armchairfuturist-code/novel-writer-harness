@@ -83,14 +83,13 @@ def run_characters(spec: dict, world: dict) -> dict:
         world_context=world_context or "Not specified",
     )
 
-    content = client.chat_with_retry(
+    chars = client.chat_parse_with_retry(
         model,
         messages=[{"role": "user", "content": prompt}],
         system_prompt=CHAR_SYSTEM_PROMPT,
+        label="characters",
         temperature=0.8,
     )
-
-    chars = parse_json_output(content, label="characters")
 
     client.close()
     return chars

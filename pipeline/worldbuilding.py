@@ -56,14 +56,13 @@ def run_worldbuilding(spec: dict) -> dict:
         unique_angle=spec.get("unique_angle", ""),
     )
 
-    content = client.chat_with_retry(
+    world = client.chat_parse_with_retry(
         model,
         messages=[{"role": "user", "content": prompt}],
         system_prompt=WORLD_SYSTEM_PROMPT,
+        label="worldbuilding",
         temperature=0.8,
     )
-
-    world = parse_json_output(content, label="worldbuilding")
 
     client.close()
     return world

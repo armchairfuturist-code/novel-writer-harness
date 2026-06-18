@@ -108,7 +108,7 @@ class Config:
             # Kimi K2.6 variants — prose-optimized, 3 variants to benchmark
             "kimi-speed": ModelConfig(name="kimi-k2.6"),
             "kimi-balanced": ModelConfig(name="kimi-k2.6-precision"),
-            "kimi-precision": ModelConfig(name="kimi-k2.6-precision"),
+            "kimi-precision": ModelConfig(name="kimi-k2.6-precision", max_tokens=16384),
             # DeepSeek — large context window
             "deepseek": ModelConfig(name="deepseek-v4-pro-precision", temperature=0.7, max_tokens=16384),
             # DeepSeek V4 Flash — reasoning + cheap, good for thin-area detection

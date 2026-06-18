@@ -46,14 +46,13 @@ def run_seed(concept: str) -> dict:
     client = CrofaiClient(config)
     model = config.model_for_phase("seed")
 
-    content = client.chat_with_retry(
+    spec = client.chat_parse_with_retry(
         model,
         messages=[{"role": "user", "content": SEED_USER_TEMPLATE.format(concept=concept)}],
         system_prompt=SEED_SYSTEM_PROMPT,
+        label="seed spec",
         temperature=0.7,
     )
-
-    spec = parse_json_output(content, label="seed spec")
 
     required = ["genre", "premise", "tone", "target_chapters"]
     for key in required:

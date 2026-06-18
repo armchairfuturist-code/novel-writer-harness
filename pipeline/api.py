@@ -173,6 +173,94 @@ def _extract_json(text: str) -> dict:
     return None
 
 
+def _looks_truncated(text: str) -> bool:
+    """Heuristic: response looks cut off mid-stream.
+
+    True when the response is clearly incomplete: doesn't end with a
+    closing brace after unwrap, OR ends inside an unterminated string
+    (odd number of unescaped quotes in the tail).
+    """
+    stripped = text.rstrip()
+    if not stripped:
+        return False
+    # Healthy JSON ends with } (object) or ] (array). Allow trailing whitespace.
+    if stripped[-1] in ("}", "]"):
+        return False
+    # Otherwise it's incomplete — confirm by checking for unbalanced braces.
+    depth = 0
+    in_string = False
+    escape = False
+    for ch in stripped:
+        if escape:
+            escape = False
+            continue
+        if ch == chr(92):
+            escape = True
+            continue
+        if ch == chr(34):
+            in_string = not in_string
+            continue
+        if not in_string:
+            if ch == chr(123):
+                depth += 1
+            elif ch == chr(125):
+                depth -= 1
+    # If still open OR ended inside a string, it's truncated.
+    return depth > 0 or in_string
+
+
+def _looks_truncated_prose(text: str, min_chars: int = 200,
+                           tail_window: int = 80) -> bool:
+    """Heuristic: free-form prose response looks cut off mid-stream.
+
+    Distinct from _looks_truncated (JSON-shape aware). For prose we look at
+    the last `tail_window` characters and check that the text ends on a
+    terminal sentence boundary. If the final window has NO terminal
+    punctuation, the model stopped mid-thought — flag as truncated.
+
+    The check intentionally tolerates:
+    - Dialogue tags after closing quotes ('"Yes." He left.' is complete)
+    - Trailing whitespace/newlines
+    - Markdown structures (#, *, -, > endings)
+
+    Args:
+        text: Response text to evaluate
+        min_chars: Don't flag short responses (likely intentional fragments)
+        tail_window: Size of trailing window to scan for terminal punctuation
+
+    Returns:
+        True if the prose clearly stops mid-sentence.
+    """
+    stripped = text.rstrip()
+    if not stripped or len(stripped) < min_chars:
+        return False
+
+    # Markdown structural endings are considered complete by intent.
+    last = stripped[-1]
+    if last in "#*-":
+        return False
+    # Look at the last 5 characters. A response ending on a terminal
+    # sentence-ender (period, !, ?, or closing quote) is complete. An
+    # ending with no ender in this tight window is mid-thought.
+    # Using a tight window (5 chars) avoids false-positives from quotes
+    # that are mid-dialogue, opening italics, etc.
+    last_5 = stripped[-5:]
+    # Sentence-enders: terminal punctuation, closing quotes. We treat
+    # any straight " as an ender when it appears at the very end OR is
+    # immediately followed by a space, capital, or EOL. This avoids
+    # treating opening quotes ('"The' in '"The press') as completion.
+    enders = set('.!?)\u201d\u2019\u2014')
+    for ch in last_5:
+        if ch in enders:
+            return False
+    # Last char is straight double-quote and it IS at the very end
+    # of the response (true closing quote) — also complete.
+    if last_5[-1] == '\"':
+        return False
+    # No terminal punctuation in the last 5 chars. Mid-thought.
+    return True
+
+
 def parse_json_output(content: str, label: str = "response") -> dict:
     """Parse a model's JSON output, handling markdown wrapping and errors.
 
@@ -184,7 +272,10 @@ def parse_json_output(content: str, label: str = "response") -> dict:
         Parsed dict
 
     Raises:
-        RuntimeError: If JSON cannot be extracted
+        RuntimeError: If JSON cannot be extracted. The message starts with
+            "TRUNCATED:" when the response looks cut off mid-stream (vs. a
+            malformed-but-complete response) so callers can distinguish and
+            retry the upstream chat call.
     """
     content = _unwrap_json(content)
 
@@ -207,6 +298,12 @@ def parse_json_output(content: str, label: str = "response") -> dict:
             extracted = _extract_json(repaired)
             if extracted is not None:
                 return extracted
+        # Classify: truncated vs malformed
+        if _looks_truncated(content):
+            raise RuntimeError(
+                f"TRUNCATED: Failed to parse {label} as JSON (response cut off mid-stream). "
+                f"Response preview: {content[:300]}"
+            )
         raise RuntimeError(
             f"Failed to parse {label} as JSON. "
             f"Response preview: {content[:300]}"
@@ -297,6 +394,10 @@ class CrofaiClient:
             data = resp.json()
             result = data["choices"][0]["message"]["content"]
 
+            # Treat empty responses as transient — surface so chat_with_retry can retry.
+            if not result or not result.strip():
+                raise RuntimeError("API returned empty response (transient)")
+
             # Cache the result
             if self.use_cache:
                 _write_cache(ck, result)
@@ -354,6 +455,57 @@ class CrofaiClient:
                     time.sleep(delay)
 
         raise RuntimeError(f"All {max_retries + 1} attempts failed: {last_error}")
+
+    def chat_parse_with_retry(
+        self,
+        model: ModelConfig,
+        messages: list[dict],
+        system_prompt: Optional[str] = None,
+        label: str = "response",
+        max_parse_retries: int = 2,
+        **kwargs,
+    ) -> dict:
+        """Chat completion with parse_json_output, retrying on truncated responses.
+
+        Wraps chat_with_retry + parse_json_output. When the upstream chat returns
+        a response that parse_json_output identifies as TRUNCATED, the chat is
+        re-issued (up to max_parse_retries extra attempts) before giving up.
+        Malformed-but-complete responses propagate immediately.
+
+        Args:
+            model: ModelConfig for routing
+            messages: Chat messages
+            system_prompt: Optional system message
+            label: Label passed to parse_json_output for error messages
+            max_parse_retries: Extra chat retries on truncation
+            **kwargs: Forwarded to chat_with_retry
+
+        Returns:
+            Parsed dict from parse_json_output
+
+        Raises:
+            RuntimeError: If all retries exhausted or non-truncation parse error.
+        """
+        total_attempts = max_parse_retries + 1
+        last_error: Optional[Exception] = None
+        for attempt in range(total_attempts):
+            try:
+                content = self.chat_with_retry(
+                    model, messages, system_prompt, **kwargs
+                )
+                return parse_json_output(content, label=label)
+            except RuntimeError as e:
+                last_error = e
+                if str(e).startswith("TRUNCATED:") and attempt < total_attempts - 1:
+                    # Backoff before re-issuing chat
+                    time.sleep(2 ** (attempt + 1))
+                    continue
+                raise
+        # Defensive — loop above should always raise or return
+        raise RuntimeError(
+            f"All {total_attempts} attempts failed for {label}: {last_error}"
+        )
+
 
     def close(self):
         self._http.close()

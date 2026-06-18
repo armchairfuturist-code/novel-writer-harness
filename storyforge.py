@@ -861,7 +861,7 @@ def main():
                     enable_adversarial=not args.no_adversarial,
                     iterative_backprop=not args.no_iterative_backprop,
                     genre=args.genre,
-                    canonical_store=create_canonical_store('file', project_dir=project_dir),
+                    canonical_store=create_canonical_store('file', project_dir=resume_dir),
                     enable_reio=not args.no_reio,
                     precompiled_spec=compiled_spec,
                     feedback_enabled=feedback_enabled if feedback_enabled is not None else True,
@@ -963,17 +963,25 @@ def main():
         print("\nError: provide a seed concept or use --benchmark, --interactive, or --resume")
         sys.exit(1)
 
-    # Determine project directory
-    project_slug = slugify(args.concept)[:40]
-    project_dir = os.path.join(
-        config.project_dir or os.path.join(os.path.expanduser("~"), "storyforge-projects"),
-        project_slug,
-    )
+    # Determine project directory.
+    # When the user passes --project-dir explicitly, use it as-is.
+    # Otherwise, slugify the concept and nest under config.project_dir.
+    if args.project_dir and os.path.basename(args.project_dir) != slugify(args.concept)[:40]:
+        # User gave a full target path — honor it verbatim.
+        project_dir = os.path.abspath(args.project_dir)
+    else:
+        project_slug = slugify(args.concept)[:40]
+        project_dir = os.path.join(
+            config.project_dir or os.path.join(os.path.expanduser("~"), "storyforge-projects"),
+            project_slug,
+        )
+    os.makedirs(project_dir, exist_ok=True)
 
     if args.agents:
         run_showrunner_pipeline(
             args.concept,
             config,
+            project_dir=project_dir,
             genre=args.genre,
             parallel_writers=args.parallel_writers,
             enable_revision=not args.quick,

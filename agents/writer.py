@@ -88,6 +88,95 @@ def _select_style_profile(chapter_num: int, total_chapters: int) -> tuple[str, s
     return name, STYLE_PROFILES.get(name, profiles[0])
 
 
+def chapter_draft_with_retry(
+    client: CrofaiClient,
+    model: Any,
+    initial_messages: list[dict],
+    system_prompt: str,
+    max_continuations: int = 2,
+    temperature: float = 0.8,
+) -> str:
+    """Send a chapter-draft chat and continue if the response is truncated.
+
+    Wraps ``client.chat_with_retry`` with a post-response check using
+    ``pipeline.api._looks_truncated_prose``. When the first response ends
+    mid-sentence, issues a continuation prompt asking the model to pick
+    up from where it left off and finish the chapter. The continuation
+    is appended to the original text. Repeats up to ``max_continuations``
+    times. If the response is still truncated after all continuations,
+    returns what we have and lets the caller decide.
+
+    Args:
+        client: CrofaiClient to use
+        model: ModelConfig for the chat call
+        initial_messages: List of message dicts for the first call
+        system_prompt: System message for the call
+        max_continuations: Max number of continuation requests on truncation
+        temperature: Sampling temperature
+
+    Returns:
+        Full chapter text (original + appended continuations)
+    """
+    from pipeline.api import _looks_truncated_prose
+
+    content = client.chat_with_retry(
+        model,
+        messages=initial_messages,
+        system_prompt=system_prompt,
+        temperature=temperature,
+    )
+
+    for attempt in range(max_continuations):
+        if not _looks_truncated_prose(content):
+            break
+
+        # Build a continuation prompt that gives the model the tail of
+        # what it wrote and asks it to pick up mid-sentence.
+        tail = content[-500:].rstrip()
+        continuation_prompt = (
+            "Your previous response was cut off mid-sentence. Here is the\n"
+            "tail end of what you wrote:\n\n"
+            "---TAIL---\n"
+            f"{tail}\n"
+            "---END TAIL---\n\n"
+            "Continue the chapter starting from where you left off. Do not\n"
+            "repeat any text. Write AT LEAST 400 more words to bring the\n"
+            "chapter to a proper conclusion. End on a complete sentence."
+        )
+
+        # Strip the original last partial sentence so the continuation
+        # does not duplicate it. Find the last sentence-ender and trim.
+        enders = set('.!?\")\u201d\u2019\u2014')
+        last_end_idx = -1
+        for i, ch in enumerate(content):
+            if ch in enders:
+                last_end_idx = i
+        if last_end_idx >= 0 and last_end_idx > len(content) * 0.5:
+            # Found a sentence-ender in the latter half — trim to it.
+            content = content[: last_end_idx + 1]
+
+        # Build continuation messages
+        continuation_messages = list(initial_messages) + [
+            {"role": "assistant", "content": content},
+            {"role": "user", "content": continuation_prompt},
+        ]
+
+        try:
+            continuation = client.chat_with_retry(
+                model,
+                messages=continuation_messages,
+                system_prompt=system_prompt,
+                temperature=temperature,
+            )
+            content = content + "\n\n" + continuation
+        except RuntimeError as e:
+            print(f"        Continuation {attempt + 1} failed: {e}")
+            break
+
+    return content
+
+
+
 class WriterAgent(StoryForgeAgent):
     """Drafts a single chapter from a structured brief.
 
@@ -213,9 +302,10 @@ class WriterAgent(StoryForgeAgent):
         print(f"    [Writer:{self.agent_id}] Drafting Ch {chapter_num} ({style_name})...")
         start = time.time()
 
-        content = client.chat_with_retry(
+        content = chapter_draft_with_retry(
+            client,
             model,
-            messages=[{"role": "user", "content": prompt}],
+            initial_messages=[{"role": "user", "content": prompt}],
             system_prompt=DRAFT_SYSTEM_PROMPT,
             temperature=0.8,
         )
@@ -239,7 +329,7 @@ class WriterAgent(StoryForgeAgent):
                     break
 
                 revision_prompt = _generate_revision_prompt(
-                    current_text, current_score, style_name, config
+                    current_text, current_score, style_name
                 )
                 if not revision_prompt:
                     break

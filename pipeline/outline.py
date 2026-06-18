@@ -240,13 +240,13 @@ def run_outline(spec: dict, world: dict, characters: dict, structure: str = "thr
     )
 
     try:
-        content = client.chat_with_retry(
+        outline = client.chat_parse_with_retry(
             model,
             messages=[{"role": "user", "content": prompt}],
             system_prompt=OUTLINE_SYSTEM_PROMPT,
+            label="outline",
             temperature=0.7,
         )
-        outline = parse_json_output(content, label="outline")
     except RuntimeError as api_err:
         print(f"  Outline API call failed: {api_err}")
         print(f"  Generating fallback outline from genre template.")

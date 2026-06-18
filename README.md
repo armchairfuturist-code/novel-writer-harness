@@ -112,26 +112,33 @@ The debate loop runs: parallel evaluation → cross-examination (up to 2 rounds)
 
 ## How it uses different AI models
 
-Different AI models have different strengths. This tool routes each task to the best model:
+Different AI models have different strengths. StoryForge routes each phase
+to the model best suited for that task — planning gets a large-context
+reasoning model, drafting gets a prose-optimized writer, scoring gets a
+fast cheap model, and mechanical checks run locally with zero API cost.
 
-| Phase | Model | Why |
+The default routing is tuned for quality, but every assignment is overridable:
+
+```bash
+export LLM_BASE_URL="https://your-provider.com/v1"
+export LLM_API_KEY="your-key"
+export LLM_MODEL_DRAFT="gpt-4o"                    # override drafting model
+export LLM_MODEL_SEED="claude-sonnet-4-20250514"    # override planning model
+```
+
+| Phase | Default | Rationale |
 |---|---|---|
-| Planning (seed, world, outline) | DeepSeek V4 Pro | Large context window for expansive worldbuilding |
-| Outline validation | DeepSeek V4 Flash | Cheap reasoning with 1M context for 22-chapter outlines |
-| Character creation | Kimi K2.6 | Prose-optimized, writes nuanced character profiles |
-| Chapter writing | Kimi K2.6 Precision | Best writing quality for long-form fiction |
-| Mechanical scoring | Built-in (no API call) | Regex-based — instant, zero cost |
-| Revision (LLM pass) | Kimi K2.6 Precision | Fixes specific mechanical + continuity issues |
-| Backward propagation | Built-in (no API call) | Pattern matching — detects contradictions without LLM |
-| Adversarial editing | Kimi K2.6 Precision | Identifies and classifies cuts per chapter |
-| Literary critique | Kimi K2.6 | Dual-persona review (Critic + Professor) |
-| Lore Prosecutor | DeepSeek V4 Pro | Continuity cross-referencing against canonical state |
-| Plot Sentinel | Kimi K2.6 | Foreshadowing state machine + outline beat compliance |
-| Mechanical Magistrate | Qwen3.5 9B | Conflict resolution, change declaration cross-validation |
-| Canonical state store | Built-in (no API call) | Word-overlap scoring on local JSON file — no LLM tokens |
-| Style engine | Built-in (no API call) | Pure-Python regex + Counter analysis — no LLM tokens |
+| Planning (seed, world, outline) | large-context reasoner | Expansive worldbuilding needs big context |
+| Character creation | prose-optimized model | Nuanced profiles need strong creative writing |
+| Chapter drafting | prose-optimized model (precision variant) | Best long-form fiction quality |
+| Outline validation | fast reasoner | Structural checks need reasoning, not prose |
+| Revision + adversarial | prose-optimized model (precision) | Targeted fixes against specific feedback |
+| Debate: Lore Prosecutor | large-context reasoner | Cross-references against full canonical state |
+| Debate: Plot Sentinel | prose-optimized model | Foreshadowing + beat compliance |
+| Debate: Magistrate | fast/cheap model | Conflict resolution, mechanical reconciliation |
+| Scoring, canonical state, style | built-in (no API) | Regex, word-overlap, Counter — zero cost |
 
-Configured for any OpenAI-compatible API. The endpoint defaults to `https://beta.crof.ai/v1` but can be overridden with `LLM_BASE_URL`. Per-phase model selection can be overridden with `LLM_MODEL_SEED`, `LLM_MODEL_DRAFT`, etc. Change routing defaults in `config.py`.
+Change routing defaults in `config.py`. Any OpenAI-compatible API works.
 
 ---
 

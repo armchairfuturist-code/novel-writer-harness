@@ -1,0 +1,11 @@
+# codegraphignore for project indexes
+# Built-in: node_modules/, target/, dist/, build/, .next/, .turbo/, __pycache__/, .venv/, venv/, .pytest_cache/
+# Additional project-level junk seen during 2026-06-16 reinit:
+.git/
+.codegraph/   # never recurse into nested project indexes
+.agents/      # stray ad-hoc skills dir from earlier sessions
+.bg-shell/    # ephemeral shell output dir
+*.log
+*.lock
+*.tmp
+*.bak

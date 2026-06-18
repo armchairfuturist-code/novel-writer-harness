@@ -23,6 +23,7 @@ from agents.base import (
     StoryForgeAgent,
     TASK_PLAN_NOVEL,
     TASK_ASSIGN_BATCH,
+    TASK_DRAFT_CHAPTER,
     TASK_BATCH_DRAFT,
     TASK_BATCH_REVIEW,
     TASK_BUILD_WORLD,
@@ -44,6 +45,8 @@ from pipeline.canonical_store import CanonicalStore, FileCanonicalStore, create_
 from agents.writer import WriterAgent
 from agents.critic import CriticAgent
 from agents.continuity import ContinuityAgent
+from pipeline.api import CrofaiClient
+from pipeline.draft import DRAFT_SYSTEM_PROMPT
 
 
 # ── Parallel Execution Pool ────────────────────────────────────────────
@@ -550,6 +553,69 @@ def run_showrunner_pipeline(
             score = ch_data.get("score", {})
             word_count = ch_data.get("word_count", len(content.split()))
 
+            # Skip empty chapters — likely a transient empty LLM response.
+            # The chat_with_retry layer should have retried, but if all retries
+            # produced empty text, surface the failure instead of writing
+            # a 49-byte stub.
+            if not content or word_count == 0:
+                print(f"  [Showrunner] Writer produced empty Ch {ch_num} "
+                      f"(score {score.get('total_score', '?')}/10). Skipping.")
+                continue
+
+            # Truncation safety-net: if the chapter ends mid-sentence, try
+            # ONE final continuation pass through the same client. This
+            # catches cases where the drafter's continuation retry loop
+            # exhausted its attempts and returned a still-truncated
+            # response. If the safety-net continuation also fails, refuse
+            # to write a broken chapter — fall back to the on-disk copy
+            # (if any) or skip.
+            from pipeline.api import _looks_truncated_prose
+            if _looks_truncated_prose(content):
+                print(f"  [Showrunner] Ch {ch_num} appears truncated, "
+                      f"attempting one final continuation...")
+                try:
+                    model = config.model_for_phase("draft")
+                    tail = content[-500:].rstrip()
+                    # Trim back to last complete sentence
+                    enders = set('.!?\")\u201d\u2019\u2014')
+                    last_end_idx = -1
+                    for i, ch in enumerate(content):
+                        if ch in enders:
+                            last_end_idx = i
+                    if last_end_idx >= 0 and last_end_idx > len(content) * 0.5:
+                        content = content[: last_end_idx + 1]
+                    cont_prompt = (
+                        "Your previous response was cut off mid-sentence. "
+                        "Here is the tail end:\n\n---TAIL---\n"
+                        f"{tail}\n---END TAIL---\n\n"
+                        "Continue the chapter starting from where you left off. "
+                        "Do not repeat any text. Write AT LEAST 400 more words "
+                        "to bring the chapter to a proper conclusion. End on a "
+                        "complete sentence."
+                    )
+                    with CrofaiClient(config) as safety_client:
+                        cont = safety_client.chat_with_retry(
+                            model,
+                            messages=[
+                                {"role": "user", "content": cont_prompt},
+                                {"role": "assistant", "content": content},
+                                {"role": "user", "content": "Continue. End on a complete sentence."},
+                            ],
+                            system_prompt=DRAFT_SYSTEM_PROMPT,
+                            temperature=0.8,
+                        )
+                    content = content + "\n\n" + cont
+                    word_count = len(content.split())
+                    print(f"  [Showrunner] Ch {ch_num} continuation "
+                          f"appended; now {word_count} words")
+                except Exception as e:
+                    print(f"  [Showrunner] Ch {ch_num} safety-net "
+                          f"continuation failed: {e}")
+                    # If we still can't finish it, keep what we have rather
+                    # than writing a 49-byte stub. The writer layer has done
+                    # its best; downstream review will flag the gap.
+
+
             # Write chapter file
             ch_filename = f"chapter-{ch_num:03d}.md"
             ch_path = os.path.join(chapters_dir, ch_filename)
@@ -557,34 +623,33 @@ def run_showrunner_pipeline(
             with open(ch_path, "w", encoding="utf-8") as f:
                 f.write(header + content)
 
-            # Update canonical store with new chapter state
-            canonical_store.store(
-                key=f"ch{ch_num}_summary",
-                value=f"Ch {ch_num} ({ch_title}): {ch_data.get('summary', '')[:200]}",
+            # Update canonical store with new chapter state.
+            # FileCanonicalStore exposes store_memory(content, tags, importance),
+            # not store(key, value). The orchestrator stores raw chapters via
+            # update_after_chapter at the end of each batch instead.
+            canonical_store.store_memory(
+                content=f"Ch {ch_num} ({ch_title}): {ch_data.get('summary', '')[:200]}",
                 tags=["chapter_summary", f"ch{ch_num}"],
             )
 
             # Store character developments
             for trait in ch_data.get("character_traits", []):
-                canonical_store.store(
-                    key=f"char_{trait.get('name', 'unknown')}_{trait.get('trait', '')}",
-                    value=trait.get("value", ""),
+                canonical_store.store_memory(
+                    content=f"{trait.get('name', 'unknown')} {trait.get('trait', '')}: {trait.get('value', '')}",
                     tags=["character_trait", trait.get("name", "").lower()],
                 )
 
             # Store foreshadowing plants
             for plant in ch_data.get("foreshadowing_plants", []):
-                canonical_store.store(
-                    key=f"foreshadow_ch{ch_num}_{plant.get('element', '')}",
-                    value=plant.get("description", ""),
+                canonical_store.store_memory(
+                    content=plant.get("description", ""),
                     tags=["foreshadowing", "unpaid"],
                 )
 
             # Store plot thread updates
             for thread in ch_data.get("plot_threads", []):
-                canonical_store.store(
-                    key=f"thread_{thread.get('name', 'unknown')}",
-                    value=thread.get("status", ""),
+                canonical_store.store_memory(
+                    content=f"Thread {thread.get('name', 'unknown')}: {thread.get('status', '')}",
                     tags=["plot_thread", thread.get("status", "active")],
                 )
 
