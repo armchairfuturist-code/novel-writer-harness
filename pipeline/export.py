@@ -3,15 +3,19 @@
 Produces:
 - Markdown (always - the canonical format)
 - PDF via Pandoc + LaTeX (if available)
-- EPUB via Pandoc (if available)
+- EPUB via Pandoc (if available), or pure-Python fallback
 
 Also generates metadata files and a manuscript status summary.
 """
 
+import html as html_mod
 import json
 import os
+import re
 import subprocess
 import shutil
+import uuid
+import zipfile
 from typing import Optional
 
 from config import Config
@@ -98,6 +102,172 @@ def try_pandoc_export(manuscript_path: str, project_dir: str, formats: list[str]
     return results
 
 
+def _md_to_xhtml(text: str, title: str) -> str:
+    """Minimal markdown to XHTML converter (no dependencies)."""
+    lines = text.split("\n")
+    body: list[str] = []
+    in_para = False
+
+    def _close_para():
+        nonlocal in_para
+        if in_para:
+            body.append("</p>")
+            in_para = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        if stripped.startswith("> POV:") or stripped.startswith("> POV :"):
+            continue
+
+        heading_match = re.match(r'^(#{1,3})\s+(.+)', stripped)
+        if heading_match:
+            _close_para()
+            level = len(heading_match.group(1))
+            body.append(f"<h{level}>{html_mod.escape(heading_match.group(2))}</h{level}>")
+            continue
+
+        if not stripped:
+            _close_para()
+            continue
+
+        content = html_mod.escape(stripped)
+        content = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', content)
+        content = re.sub(r'\*(.+?)\*', r'<em>\1</em>', content)
+        content = re.sub(r'`(.+?)`', r'<code>\1</code>', content)
+
+        if not in_para:
+            body.append("<p>")
+            in_para = True
+        else:
+            body.append("<br/>")
+        body.append(content)
+
+    _close_para()
+
+    body_html = "\n".join(body)
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>{html_mod.escape(title)}</title>
+<style>
+body {{ font-family: Georgia, serif; margin: 2em; line-height: 1.6; }}
+h1 {{ font-size: 1.8em; margin-top: 2em; }}
+p {{ text-indent: 1.5em; margin: 0.5em 0; }}
+</style>
+</head>
+<body>
+{body_html}
+</body>
+</html>"""
+
+
+def _build_epub_from_chapters(
+    chapter_files: list[str],
+    output_path: str,
+    title: str = "Untitled",
+    lang: str = "en",
+) -> str:
+    """Build an EPUB3 file from a sorted list of .md chapter file paths.
+
+    Uses only the Python standard library (zipfile, re, html, uuid).
+    Returns the output_path on success.
+    """
+    book_id = str(uuid.uuid4())
+    chapters: list[tuple[str, str, str]] = []
+
+    for fpath in chapter_files:
+        with open(fpath, "r", encoding="utf-8") as f:
+            text = f.read()
+        m = re.search(r'^#\s+(.+)', text, re.MULTILINE)
+        title_text = m.group(1).strip() if m else os.path.splitext(os.path.basename(fpath))[0].replace("-", " ").title()
+        slug = os.path.splitext(os.path.basename(fpath))[0]
+        chapters.append((slug, title_text, text))
+
+    with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
+
+        zf.writestr("META-INF/container.xml", """\
+<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>""")
+
+        manifest_items: list[str] = []
+        spine_items: list[str] = []
+        toc_navpoints: list[str] = []
+        nav_links: list[str] = []
+
+        for i, (slug, ch_title, text) in enumerate(chapters, 1):
+            fname = f"{slug}.xhtml"
+            zf.writestr(f"OEBPS/{fname}", _md_to_xhtml(text, ch_title))
+            manifest_items.append(f'  <item id="{slug}" href="{fname}" media-type="application/xhtml+xml"/>')
+            spine_items.append(f'  <itemref idref="{slug}"/>')
+            toc_navpoints.append(
+                f'    <navPoint id="navPoint-{i}" playOrder="{i}">\n'
+                f'      <navLabel><text>{html_mod.escape(ch_title)}</text></navLabel>\n'
+                f'      <content src="{fname}"/>\n'
+                f'    </navPoint>'
+            )
+            nav_links.append(f'      <li><a href="{fname}">{html_mod.escape(ch_title)}</a></li>')
+
+        manifest = "\n".join(manifest_items)
+        spine = "\n".join(spine_items)
+        navpoints = "\n".join(toc_navpoints)
+        nav_html = "\n".join(nav_links)
+
+        zf.writestr("OEBPS/content.opf", f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="bookid">{book_id}</dc:identifier>
+    <dc:title>{html_mod.escape(title)}</dc:title>
+    <dc:language>{lang}</dc:language>
+  </metadata>
+  <manifest>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+{manifest}
+  </manifest>
+  <spine toc="ncx">
+{spine}
+  </spine>
+</package>""")
+
+        zf.writestr("OEBPS/toc.ncx", f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head>
+    <meta name="dtb:uid" content="{book_id}"/>
+  </head>
+  <docTitle><text>{html_mod.escape(title)}</text></docTitle>
+  <navMap>
+{navpoints}
+  </navMap>
+</ncx>""")
+
+        zf.writestr("OEBPS/nav.xhtml", f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="en" lang="en">
+<head><meta charset="UTF-8"/><title>Table of Contents</title></head>
+<body>
+  <nav epub:type="toc" id="toc">
+    <h1>Table of Contents</h1>
+    <ol>
+{nav_html}
+    </ol>
+  </nav>
+</body>
+</html>""")
+
+    return output_path
+
+
 def export_manuscript(chapters: list[dict], spec: dict, world: dict, characters: dict, outline: dict, project_dir: str) -> dict:
     os.makedirs(project_dir, exist_ok=True)
 
@@ -113,6 +283,18 @@ def export_manuscript(chapters: list[dict], spec: dict, world: dict, characters:
         }, f, indent=2)
 
     pandoc_results = try_pandoc_export(manuscript_path, project_dir)
+
+    epub_result = pandoc_results.get("epub", {})
+    if not epub_result.get("success"):
+        epub_files = [ch["file"] for ch in chapters if os.path.exists(ch.get("file", ""))]
+        epub_files.sort(key=lambda p: int(re.search(r'(\d+)', os.path.splitext(os.path.basename(p))[0]).group(1)) if re.search(r'(\d+)', os.path.splitext(os.path.basename(p))[0]) else 0)
+        if epub_files:
+            epub_path = os.path.join(project_dir, f"{spec.get('title', 'manuscript').lower().replace(' ', '-')}.epub")
+            try:
+                _build_epub_from_chapters(epub_files, epub_path, title=spec.get("title", "Untitled"))
+                pandoc_results["epub"] = {"success": True, "path": epub_path, "error": None, "engine": "pure-python"}
+            except Exception as e:
+                pandoc_results["epub"] = {"success": False, "path": None, "error": str(e)}
 
     return {
         "manuscript_md": manuscript_path,
