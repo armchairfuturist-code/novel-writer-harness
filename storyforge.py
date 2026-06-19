@@ -452,7 +452,7 @@ def run_full_pipeline(
             )
         else:
             print("  Mode: ONE-SHOT")
-            bp_report = run_backward_propagation(chapters_dir, outline_path)
+            bp_report = run_backward_propagation(chapters_dir, os.path.join(project_dir, "outline.json"))
 
         elapsed = time.time() - start
         print(f"  Status: {bp_report['status']}")

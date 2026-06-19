@@ -216,77 +216,48 @@ class Config:
             )
         return self.api_key
 
+    def _resolve_model(self, task: str, routing: dict, fallback: str = "kimi-balanced") -> ModelConfig:
+        """Resolve a model config from routing dict, env override, and base_url.
+
+        Common pattern for model_for_phase / model_for_interview / model_for_debate.
+        """
+        env_key = os.environ.get(f"LLM_MODEL_{task.upper()}")
+        if env_key and env_key in self.models:
+            key = env_key
+        else:
+            key = routing.get(task, fallback)
+        cfg = self.models[key]
+        if not cfg.base_url:
+            from dataclasses import replace
+            cfg = replace(cfg, base_url=self.base_url)
+        return cfg
+
     def model_for_phase(self, phase: str) -> ModelConfig:
         """Get the best model config for a pipeline phase.
 
         Checks LLM_MODEL_{PHASE} env var first (e.g. LLM_MODEL_DRAFT),
         then falls back to the configured phase-to-model routing.
-        Resolves base_url from config when ModelConfig.base_url is empty.
         """
-        # Check env override first
-        env_key = os.environ.get(f"LLM_MODEL_{phase.upper()}")
-        if env_key and env_key in self.models:
-            key = env_key
-        else:
-            key = self.phase_models.get(phase, "kimi-balanced")
-        cfg = self.models[key]
-        # Resolve base_url
-        if not cfg.base_url:
-            from dataclasses import replace
-            cfg = replace(cfg, base_url=self.base_url)
-        return cfg
+        return self._resolve_model(phase, self.phase_models)
 
     def model_for_interview(self, task: str, override: Optional[str] = None) -> ModelConfig:
         """Get the best model config for an interview task.
 
         Args:
-            task: Interview dimension or task type (e.g. 'concept_premise',
-                  'drilling', 'compilation').
+            task: Interview dimension or task type.
             override: Optional model alias to use instead of the routed one.
-                      Must be a key in self.models (e.g. 'kimi-balanced').
-
-        Returns:
-            ModelConfig for the routed or overridden model.
         """
         if override and override in self.models:
             cfg = self.models[override]
-        else:
-            # Check env override first
-            env_key = os.environ.get(f"LLM_MODEL_{task.upper()}")
-            if env_key and env_key in self.models:
-                key = env_key
-            else:
-                key = self.interview_models.get(task, "kimi-balanced")
-            cfg = self.models[key]
-        # Resolve base_url
-        if not cfg.base_url:
-            from dataclasses import replace
-            cfg = replace(cfg, base_url=self.base_url)
-        return cfg
+            if not cfg.base_url:
+                from dataclasses import replace
+                cfg = replace(cfg, base_url=self.base_url)
+            return cfg
+        return self._resolve_model(task, self.interview_models)
 
     def model_for_debate(self, role: str) -> ModelConfig:
-        """Get the best model config for a debate court role.
-
-        Args:
-            role: One of 'lore_prosecutor', 'plot_sentinel', 'mechanical_magistrate'.
-
-        Returns:
-            ModelConfig for the routed model.
-
-        Checks LLM_MODEL_{ROLE} env var first (e.g. LLM_MODEL_LORE_PROSECUTOR),
-        then falls back to the configured debate routing.
-        Resolves base_url from config when ModelConfig.base_url is empty.
-        """
-        env_key = os.environ.get(f"LLM_MODEL_{role.upper()}")
-        if env_key and env_key in self.models:
-            key = env_key
-        else:
-            key = self.debate_models.get(role, "kimi-balanced")
-        cfg = self.models[key]
-        if not cfg.base_url:
-            from dataclasses import replace
-            cfg = replace(cfg, base_url=self.base_url)
-        return cfg
+        """Get the best model config for a debate court role."""
+        return self._resolve_model(role, self.debate_models)
 
     def model_for_benchmark(self, alias: str) -> ModelConfig:
         """Get model config for benchmark variants.

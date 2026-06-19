@@ -7,8 +7,8 @@ crof.ai users can continue using just CROFAI_API_KEY (unchanged).
 Handles auth, streaming, retries, caching, and context management.
 
 Usage:
-    from pipeline.api import LLMClient
-    client = LLMClient()
+    from pipeline.api import CrofaiClient
+    client = CrofaiClient()
     response = client.chat(model_config, messages)
 """
 
@@ -510,6 +510,3 @@ class CrofaiClient:
 
     def close(self):
         self._http.close()
-
-# LLMClient is the canonical name; CrofaiClient kept for backward compatibility.
-LLMClient = CrofaiClient
