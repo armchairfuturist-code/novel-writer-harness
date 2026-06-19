@@ -664,159 +664,82 @@ def run_draft(
         print(f"  Drafting Chapter {chapter_num}/{total}: {chapter_title}...")
         print(f"    POV: {pov} | Model: {model.name}")
 
-        # --- Parallel Variants ---
-        if parallel_variants and max_variants >= 2:
-            # Select style profiles
-            profiles_to_use = DEFAULT_STYLE_PROFILES[:max_variants]
-            variants = []
+        # --- Draft variants (parallel or single) ---
+        num_variants = max_variants if (parallel_variants and max_variants >= 2) else 1
+        profiles_to_use = DEFAULT_STYLE_PROFILES[:num_variants]
+        variants = []
 
-            for si, (style_name, style_desc) in enumerate(profiles_to_use):
-                # Override with bound style profile if one is loaded
-                if bound_style_profile is not None:
-                    from pipeline.style_engine import format_style_for_prompt
-                    style_desc = format_style_for_prompt(bound_style_profile)
-                print(f"    Variant {si + 1}/{len(profiles_to_use)}: {style_name}...")
-                variant_result = _draft_single_variant(
-                    client=client,
-                    model=model,
-                    chapter_num=chapter_num,
-                    chapter_title=chapter_title,
-                    pov=pov,
-                    summary=summary,
-                    key_events=key_events,
-                    emotional_arc=emotional_arc,
-                    foreshadowing=foreshadowing,
-                    char_arc_beat=char_arc_beat,
-                    world_context=world_context,
-                    retrieved_context=retrieved_context,
-                    foreshadow_context=foreshadow_context,
-                    style_direction=style_desc,
-                    style_name=style_name,
-                    config=config,
-                    scorer=scorer,
-                    chapter_spec=chapter_spec,
-                    hindsight_context=hindsight_context,
-                    compressed_context=compressed_context,
-                    enable_changes=enable_changes,
-                )
-                # Estimate tokens
-                total_input_tokens += _estimate_tokens(
-                    CHAPTER_DRAFT_TEMPLATE.format(
-                        chapter_number=chapter_num,
-                        chapter_title=chapter_title,
-                        pov_character=pov,
-                        chapter_summary=summary,
-                        key_events="\n".join(f"- {e}" for e in key_events) if key_events else "",
-                        emotional_arc=emotional_arc or "",
-                        foreshadowing=foreshadowing or "",
-                        character_arc_beat=char_arc_beat or "",
-                        world_context=world_context or "",
-                        retrieved_context=retrieved_context,
-                        foreshadow_context=foreshadow_context,
-                        hindsight_canonical_state=hindsight_context or "[No additional canonical state available]",
-                        style_direction=style_desc,
-                    )
-                )
-                total_output_tokens += _estimate_tokens(variant_result["content"])
-                total_variants_written += 1
-
-                # Run revision loop on this variant
-                if enable_revision:
-                    revised_text, revised_score, rev_done, changes = _run_revision_loop(
-                        client=client,
-                        model=model,
-                        chapter_text=variant_result["content"],
-                        scorer=scorer,
-                        style_name=style_name,
-                        max_rounds=config.scoring.max_revision_rounds,
-                        config=config,
-                        canonical_store=canonical,
-                        chapter_num=chapter_num,
-                        chapter_title=chapter_title,
-                        outline=outline,
-                        enable_debate=enable_debate,
-                        enable_changes=enable_changes,
-                        enable_knowledge_base=enable_knowledge_base,
-                    )
-                    variant_result["content"] = revised_text
-                    variant_result["score"] = revised_score
-                    variant_result["revisions"] = rev_done
-                    if changes is not None:
-                        variant_result["declared_changes"] = changes
-                    total_revisions += rev_done
-                else:
-                    variant_result["revisions"] = 0
-
-                variants.append(variant_result)
-                print(f"      Score: {variant_result['score']['total_score']}/10 | "
-                      f"{variant_result['score']['word_count']} words | "
-                      f"{variant_result['revisions']} revisions")
-
-            # Select best variant
-            variants.sort(key=lambda v: -v["score"]["total_score"])
-            best = variants[0]
-            best_content = best["content"]
-            best_score = best["score"]
-            best_style = best["variant"]
-
-            print(f"    Selected: {best_style} (score: {best_score['total_score']}/10)")
-        else:
-            # Single variant (original behavior or 1 variant)
-            best_style = "default"
-            single_variant_changes = None
-            profiles_to_use = DEFAULT_STYLE_PROFILES[:1]
-            style_name, style_desc = profiles_to_use[0]
-            # Override with bound style profile if one is loaded
+        for si, (style_name, style_desc) in enumerate(profiles_to_use):
             if bound_style_profile is not None:
                 from pipeline.style_engine import format_style_for_prompt
                 style_desc = format_style_for_prompt(bound_style_profile)
-
-            best_content = client.chat_with_retry(
-                model,
-                messages=[{"role": "user", "content": CHAPTER_DRAFT_TEMPLATE.format(
-                    chapter_number=chapter_num,
-                    chapter_title=chapter_title,
-                    pov_character=pov,
-                    chapter_summary=summary,
+            label = f"Variant {si + 1}/{len(profiles_to_use)}" if num_variants > 1 else "Drafting"
+            print(f"    {label}: {style_name}...")
+            variant_result = _draft_single_variant(
+                client=client, model=model,
+                chapter_num=chapter_num, chapter_title=chapter_title,
+                pov=pov, summary=summary, key_events=key_events,
+                emotional_arc=emotional_arc, foreshadowing=foreshadowing,
+                char_arc_beat=char_arc_beat, world_context=world_context,
+                retrieved_context=retrieved_context,
+                foreshadow_context=foreshadow_context,
+                style_direction=style_desc, style_name=style_name,
+                config=config, scorer=scorer, chapter_spec=chapter_spec,
+                hindsight_context=hindsight_context,
+                compressed_context=compressed_context,
+                enable_changes=enable_changes,
+            )
+            total_input_tokens += _estimate_tokens(
+                CHAPTER_DRAFT_TEMPLATE.format(
+                    chapter_number=chapter_num, chapter_title=chapter_title,
+                    pov_character=pov, chapter_summary=summary,
                     key_events="\n".join(f"- {e}" for e in key_events) if key_events else "",
-                    emotional_arc=emotional_arc or "",
-                    foreshadowing=foreshadowing or "",
-                    character_arc_beat=char_arc_beat or "",
-                    world_context=world_context or "",
+                    emotional_arc=emotional_arc or "", foreshadowing=foreshadowing or "",
+                    character_arc_beat=char_arc_beat or "", world_context=world_context or "",
                     retrieved_context=retrieved_context,
                     foreshadow_context=foreshadow_context,
                     hindsight_canonical_state=hindsight_context or "[No additional canonical state available]",
                     style_direction=style_desc,
-                )}],
-                system_prompt=DRAFT_SYSTEM_PROMPT,
-                temperature=0.8,
+                )
             )
-            best_score = scorer.score_chapter(best_content)
-            total_input_tokens += _estimate_tokens(CHAPTER_DRAFT_TEMPLATE)
-            total_output_tokens += _estimate_tokens(best_content)
-            total_variants_written = 1
+            total_output_tokens += _estimate_tokens(variant_result["content"])
+            total_variants_written += 1
 
-            # Revision loop on single variant
             if enable_revision:
-                best_content, best_score, rev_done, changes = _run_revision_loop(
-                    client=client,
-                    model=model,
-                    chapter_text=best_content,
-                    scorer=scorer,
-                    style_name=best_style,
+                revised_text, revised_score, rev_done, changes = _run_revision_loop(
+                    client=client, model=model,
+                    chapter_text=variant_result["content"],
+                    scorer=scorer, style_name=style_name,
                     max_rounds=config.scoring.max_revision_rounds,
-                    config=config,
-                    canonical_store=canonical,
-                    chapter_num=chapter_num,
-                    chapter_title=chapter_title,
-                    outline=outline,
-                    enable_debate=enable_debate,
+                    config=config, canonical_store=canonical,
+                    chapter_num=chapter_num, chapter_title=chapter_title,
+                    outline=outline, enable_debate=enable_debate,
                     enable_changes=enable_changes,
                     enable_knowledge_base=enable_knowledge_base,
                 )
+                variant_result["content"] = revised_text
+                variant_result["score"] = revised_score
+                variant_result["revisions"] = rev_done
                 if changes is not None:
-                    single_variant_changes = changes
+                    variant_result["declared_changes"] = changes
                 total_revisions += rev_done
+            else:
+                variant_result["revisions"] = 0
+
+            variants.append(variant_result)
+            print(f"      Score: {variant_result['score']['total_score']}/10 | "
+                  f"{variant_result['score']['word_count']} words | "
+                  f"{variant_result['revisions']} revisions")
+
+        # Select best variant
+        variants.sort(key=lambda v: -v["score"]["total_score"])
+        best = variants[0]
+        best_content = best["content"]
+        best_score = best["score"]
+        best_style = best["variant"]
+
+        if num_variants > 1:
+            print(f"    Selected: {best_style} (score: {best_score['total_score']}/10)")
 
         # Save chapter
         chapter_file = os.path.join(chapters_dir, f"chapter-{chapter_num:03d}.md")
@@ -839,13 +762,9 @@ def run_draft(
         written_chapter_meta.append(chapter_result)
 
         # ── Apply canonical state updates (changes-based or fallback) ─
-        chapter_changes = None
-        if enable_changes and parallel_variants and max_variants >= 2:
-            chapter_changes = best.get("declared_changes")
-        elif enable_changes:
-            chapter_changes = single_variant_changes
+        chapter_changes = best.get("declared_changes") if enable_changes else None
 
-        if enable_changes and chapter_changes is not None:
+        if chapter_changes is not None:
             from pipeline.changes import apply_changes_to_store, changes_to_summary_line
             change_count = apply_changes_to_store(chapter_changes, canonical, chapter_num)
             summary_line = changes_to_summary_line(chapter_changes)
