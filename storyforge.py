@@ -579,6 +579,63 @@ def _store_interview_answers(store, result: dict) -> None:
         store.store(key=key, value=answer_text, tags=tags)
 
 
+def _launch_pipeline(
+    concept: str,
+    config: Config,
+    project_dir: str,
+    args,
+    feedback_default: bool = False,
+    precompiled_spec: Optional[dict] = None,
+    resume_from: int = 1,
+) -> None:
+    """Shared entry point for all pipeline launch paths (direct, resume, interactive).
+
+    Consolidates the 3x duplicated agents/non-agents branching in main().
+    """
+    if args.agents:
+        run_showrunner_pipeline(
+            concept,
+            config,
+            precompiled_spec=precompiled_spec,
+            genre=args.genre,
+            project_dir=project_dir,
+            parallel_writers=args.parallel_writers,
+            enable_revision=not args.quick,
+            enable_backprop=not args.no_backprop,
+            enable_adversarial=not args.no_adversarial,
+            feedback_enabled=feedback_default,
+            enable_debate=args.debate,
+            enable_changes=not args.no_changes,
+            enable_knowledge_base=not args.no_knowledge_base,
+            style_profile_name=args.style_profile,
+            auto_style_extract=args.auto_style_extract,
+            enable_validate_outline=not args.no_validate_outline,
+        )
+    else:
+        run_full_pipeline(
+            concept,
+            config,
+            resume_from=resume_from,
+            quick=args.quick,
+            parallel_variants=not args.single_variant,
+            dual_review=not args.single_review,
+            enable_backprop=not args.no_backprop,
+            enable_adversarial=not args.no_adversarial,
+            iterative_backprop=not args.no_iterative_backprop,
+            genre=args.genre,
+            canonical_store=create_canonical_store('file', project_dir=project_dir),
+            enable_reio=not args.no_reio,
+            precompiled_spec=precompiled_spec,
+            feedback_enabled=feedback_default,
+            enable_debate=args.debate,
+            enable_changes=not args.no_changes,
+            enable_knowledge_base=not args.no_knowledge_base,
+            style_profile_name=args.style_profile,
+            auto_style_extract=args.auto_style_extract,
+            enable_validate_outline=not args.no_validate_outline,
+        )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="StoryForge v0.3 - autonomous novel-writing pipeline with GBrain, rhetorical strategies, ReIO, iterative backprop"
@@ -832,47 +889,14 @@ def main():
             print(f"  Chapters: {compiled_spec.get('target_chapters', 'Auto')}")
             print(f"\n  Launching full pipeline from compiled bible...\n")
 
-            if args.agents:
-                run_showrunner_pipeline(
-                    compiled_spec.get("title", "Untitled Story"),
-                    config,
-                    precompiled_spec=compiled_spec,
-                    genre=args.genre,
-                    project_dir=resume_dir,
-                    parallel_writers=args.parallel_writers,
-                    enable_revision=not args.quick,
-                    enable_backprop=not args.no_backprop,
-                    enable_adversarial=not args.no_adversarial,
-                    feedback_enabled=feedback_enabled if feedback_enabled is not None else True,
-                    enable_debate=args.debate,
-                    enable_changes=not args.no_changes,
-                    enable_knowledge_base=not args.no_knowledge_base,
-                style_profile_name=args.style_profile,
-                auto_style_extract=args.auto_style_extract,
-                enable_validate_outline=not args.no_validate_outline,
-                )
-            else:
-                run_full_pipeline(
-                    compiled_spec.get("title", "Untitled Story"),
-                    config,
-                    quick=args.quick,
-                    parallel_variants=not args.single_variant,
-                    dual_review=not args.single_review,
-                    enable_backprop=not args.no_backprop,
-                    enable_adversarial=not args.no_adversarial,
-                    iterative_backprop=not args.no_iterative_backprop,
-                    genre=args.genre,
-                    canonical_store=create_canonical_store('file', project_dir=resume_dir),
-                    enable_reio=not args.no_reio,
-                    precompiled_spec=compiled_spec,
-                    feedback_enabled=feedback_enabled if feedback_enabled is not None else True,
-                    enable_debate=args.debate,
-                    enable_changes=not args.no_changes,
-                    enable_knowledge_base=not args.no_knowledge_base,
-                    style_profile_name=args.style_profile,
-                    auto_style_extract=args.auto_style_extract,
-                enable_validate_outline=not args.no_validate_outline,
-                )
+            _launch_pipeline(
+                compiled_spec.get("title", "Untitled Story"),
+                config,
+                project_dir=resume_dir,
+                args=args,
+                feedback_default=True,
+                precompiled_spec=compiled_spec,
+            )
         return
 
     # ── Interactive interview path (--interactive) ──
@@ -918,44 +942,14 @@ def main():
             print(f"\n  Launching full pipeline from compiled bible...\n")
 
             # Run the full pipeline with the compiled spec (skips seed phase)
-            if args.agents:
-                run_showrunner_pipeline(
-                    compiled_spec.get("title", "Untitled Story"),
-                    config,
-                    precompiled_spec=compiled_spec,
-                    genre=args.genre,
-                    project_dir=project_dir,
-                    parallel_writers=args.parallel_writers,
-                    enable_revision=not args.quick,
-                    enable_backprop=not args.no_backprop,
-                    enable_adversarial=not args.no_adversarial,
-                    feedback_enabled=feedback_enabled if feedback_enabled is not None else True,
-                    enable_debate=args.debate,
-                    enable_changes=not args.no_changes,
-                    enable_knowledge_base=not args.no_knowledge_base,
-                )
-            else:
-                run_full_pipeline(
-                    compiled_spec.get("title", "Untitled Story"),
-                    config,
-                    quick=args.quick,
-                    parallel_variants=not args.single_variant,
-                    dual_review=not args.single_review,
-                    enable_backprop=not args.no_backprop,
-                    enable_adversarial=not args.no_adversarial,
-                    iterative_backprop=not args.no_iterative_backprop,
-                    genre=args.genre,
-                    canonical_store=create_canonical_store('file', project_dir=project_dir),
-                    enable_reio=not args.no_reio,
-                    precompiled_spec=compiled_spec,
-                    feedback_enabled=feedback_enabled if feedback_enabled is not None else True,
-                    enable_debate=args.debate,
-                    enable_changes=not args.no_changes,
-                    enable_knowledge_base=not args.no_knowledge_base,
-                    style_profile_name=args.style_profile,
-                    auto_style_extract=args.auto_style_extract,
-                enable_validate_outline=not args.no_validate_outline,
-                )
+            _launch_pipeline(
+                compiled_spec.get("title", "Untitled Story"),
+                config,
+                project_dir=project_dir,
+                args=args,
+                feedback_default=True,
+                precompiled_spec=compiled_spec,
+            )
         return
 
     # ── Pipeline path (requires concept) ──
@@ -978,46 +972,14 @@ def main():
         )
     os.makedirs(project_dir, exist_ok=True)
 
-    if args.agents:
-        run_showrunner_pipeline(
-            args.concept,
-            config,
-            project_dir=project_dir,
-            genre=args.genre,
-            parallel_writers=args.parallel_writers,
-            enable_revision=not args.quick,
-            enable_backprop=not args.no_backprop,
-            enable_adversarial=not args.no_adversarial,
-            feedback_enabled=feedback_enabled if feedback_enabled is not None else False,
-            enable_debate=args.debate,
-            enable_changes=not args.no_changes,
-            enable_knowledge_base=not args.no_knowledge_base,
-            style_profile_name=args.style_profile,
-            auto_style_extract=args.auto_style_extract,
-            enable_validate_outline=not args.no_validate_outline,
-        )
-    else:
-        run_full_pipeline(
-            args.concept,
-            config,
-            resume_from=1,
-            quick=args.quick,
-            parallel_variants=not args.single_variant,
-            dual_review=not args.single_review,
-            enable_backprop=not args.no_backprop,
-            enable_adversarial=not args.no_adversarial,
-            iterative_backprop=not args.no_iterative_backprop,
-            genre=args.genre,
-            canonical_store=create_canonical_store('file', project_dir=project_dir),
-            enable_reio=not args.no_reio,
-            feedback_enabled=feedback_enabled if feedback_enabled is not None else False,
-            enable_debate=args.debate,
-            enable_changes=not args.no_changes,
-            enable_knowledge_base=not args.no_knowledge_base,
-            style_profile_name=args.style_profile,
-            auto_style_extract=args.auto_style_extract,
-            enable_validate_outline=not args.no_validate_outline,
-        )
+    _launch_pipeline(
+        args.concept,
+        config,
+        project_dir=project_dir,
+        args=args,
+        feedback_default=False,
+        resume_from=1,
+    )
 
 
 if __name__ == "__main__":
