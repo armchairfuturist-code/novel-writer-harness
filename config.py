@@ -91,13 +91,6 @@ class Config:
         # Users of any OpenAI-compatible API set LLM_BASE_URL + LLM_API_KEY.
         # crof.ai users can continue using just CROFAI_API_KEY (unchanged).
         self.api_key: str = self._get_env("LLM_API_KEY", "CROFAI_API_KEY")
-        if not self.api_key:
-            raise ValueError(
-                "No API key found. Set LLM_API_KEY or CROFAI_API_KEY:\n"
-                "  export LLM_API_KEY='your-key-here'        (any OpenAI-compatible provider)\n"
-                "  export CROFAI_API_KEY='your-key-here'     (crof.ai, fallback)\n"
-                "Or set via .env file."
-            )
         self.base_url: str = self._get_env(
             "LLM_BASE_URL", "CROFAI_BASE_URL", ""
         ) or "https://beta.crof.ai/v1"
@@ -206,6 +199,22 @@ class Config:
             if val:
                 return val
         return ""
+
+    def require_api_key(self) -> str:
+        """Return the API key, raising ValueError if not configured.
+
+        Call this before making API requests. The constructor no longer
+        validates the key so that Config can be instantiated in test
+        environments without a live key.
+        """
+        if not self.api_key:
+            raise ValueError(
+                "No API key found. Set LLM_API_KEY or CROFAI_API_KEY:\n"
+                "  export LLM_API_KEY='your-key-here'        (any OpenAI-compatible provider)\n"
+                "  export CROFAI_API_KEY='your-key-here'     (crof.ai, fallback)\n"
+                "Or set via .env file."
+            )
+        return self.api_key
 
     def model_for_phase(self, phase: str) -> ModelConfig:
         """Get the best model config for a pipeline phase.

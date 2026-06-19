@@ -733,6 +733,7 @@ def main():
     args = parser.parse_args()
 
     config = Config()
+    config.require_api_key()  # Fail early with a clear message
     if args.project_dir:
         config.project_dir = args.project_dir
 

@@ -329,6 +329,7 @@ class CrofaiClient:
 
     def __init__(self, config: Optional[Config] = None, use_cache: bool = False):
         self.config = config or Config()
+        self.config.require_api_key()  # Validate key exists before making requests
         self._http = httpx.Client(timeout=600.0)
         self.use_cache = use_cache
 
