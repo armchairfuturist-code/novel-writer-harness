@@ -304,9 +304,16 @@ class TestIterativeBackprop(unittest.TestCase):
     def test_iteration_tracking(self):
         self._write_chapter(1, "Blue eyes. Morning. Chapter one.")
         self._write_chapter(2, "Brown eyes. Night. Chapter two.")
-        result = run_iterative_backpropagation(
-            self.chapters_dir, self.temp_dir, self.outline_path, max_iterations=2
-        )
+        # _apply_backprop_fixes instantiates CrofaiClient and would make a
+        # real HTTP call. Mock it to return a no-op revision.
+        with patch("pipeline.iterative_backprop.CrofaiClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+            mock_client.chat.return_value = "revised chapter text"
+            mock_client.chat_with_retry.return_value = "revised chapter text"
+            result = run_iterative_backpropagation(
+                self.chapters_dir, self.temp_dir, self.outline_path, max_iterations=2
+            )
         self.assertGreaterEqual(result["iterations"], 1)
         self.assertIn("iteration_history", result)
 

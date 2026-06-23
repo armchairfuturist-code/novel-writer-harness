@@ -70,6 +70,26 @@ class DebateConfig:
     acceptable_mechanical_floor: float = 6.0  # Min mechanical score before debate triggers (only debate weak chapters)
 
 
+@dataclass
+class EmbeddingConfig:
+    """Configuration for narrative-chunk embeddings used in semantic context retrieval.
+
+    StoryForge is model-agnostic: the user picks the embedding backend and model.
+    Default is disabled so a fresh install does not require sentence-transformers.
+    Users who want semantic retrieval set LLM_ENABLE_EMBEDDINGS=1 and pick a mode.
+
+    Modes:
+    - "none"   — disabled. EmbeddingStore is a no-op. No additional deps.
+    - "local"  — sentence-transformers (user installs the package). Best for offline.
+    - "remote" — embedding through the configured LLM API (model alias below).
+    """
+    enabled: bool = False
+    mode: str = "none"  # "none" | "local" | "remote"
+    local_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    remote_model_alias: str = "flash"
+    batch_size: int = 16
+
+
 class Config:
     """Central configuration — all settings in one place. Singleton."""
 
@@ -166,8 +186,51 @@ class Config:
             "mechanical_magistrate": "flash",       # Fast, deterministic, JSON parsing
         }
 
+        # --- Model role rationale (exposed via print_routing_plan) ---
+        # Each role has a short, human-readable reason for its model choice.
+        # The model advisor (Config.print_routing_plan) uses this to help the
+        # user audit and override the selections. The principle: the project
+        # NEVER hardcodes a model for a role — the user always chooses.
+        self.model_rationale = {
+            # Pipeline phases
+            "seed":              "Planning — large context, broad creative reasoning",
+            "worldbuilding":     "Expansive world generation — needs large context window",
+            "characters":        "Character depth and prose nuance — prose-optimized",
+            "outline":           "Structural planning — prose-aware for chapter briefs",
+            "draft":             "Chapter prose — highest prose quality matters most",
+            "scoring":           "Mechanical checks — fast, cheap, deterministic",
+            "critique":          "Deep literary critique — prose-aware",
+            "final_review":      "Full-manuscript review — needs large context",
+            "interview":         "Interactive Q&A — large context for long conversations",
+            "interview_scoring": "Thin-area detection — cheap, fast",
+            "outline_validator": "Structural validation — needs context, fast",
+            # Interview dimensions
+            "concept_premise":    "Broad creative context",
+            "world_setting":      "Expansive world details",
+            "theme_voice":        "Prose and literary nuance",
+            "market_comparisons": "Quick comparisons — speed over depth",
+            "drilling":           "Follow-up generation — cheap and fast",
+            "compilation":        "Story bible compilation — large context",
+            "plot_structure":     "Structural complexity reasoning",
+            # Debate court roles
+            "lore_prosecutor":       "Large context, relational cross-referencing",
+            "plot_sentinel":         "Structural tracking, JSON constraint parsing",
+            "mechanical_magistrate": "Fast, deterministic, JSON parsing",
+        }
+
         # --- Debate ---
         self.debate = DebateConfig()
+
+        # --- Embeddings (model-agnostic, opt-in) ---
+        # Users set LLM_ENABLE_EMBEDDINGS=1 and LLM_EMBEDDING_MODE=local|remote
+        # to enable semantic retrieval. Default is disabled so a fresh install
+        # never requires sentence-transformers or any embedding model.
+        self.embeddings = EmbeddingConfig(
+            enabled=bool(os.environ.get("LLM_ENABLE_EMBEDDINGS", "")),
+            mode=os.environ.get("LLM_EMBEDDING_MODE", "none"),
+            local_model=os.environ.get("LLM_EMBEDDING_LOCAL_MODEL", "sentence-transformers/all-MiniLM-L6-v2"),
+            remote_model_alias=os.environ.get("LLM_EMBEDDING_REMOTE_ALIAS", "flash"),
+        )
 
         # --- Chapter defaults ---
         self.chapter = ChapterConfig()
@@ -258,6 +321,84 @@ class Config:
     def model_for_debate(self, role: str) -> ModelConfig:
         """Get the best model config for a debate court role."""
         return self._resolve_model(role, self.debate_models)
+
+    def model_for_embedding(self) -> Optional[ModelConfig]:
+        """Get the model config for remote-mode embeddings, or None if disabled/local."""
+        if not self.embeddings.enabled or self.embeddings.mode != "remote":
+            return None
+        alias = self.embeddings.remote_model_alias
+        if alias not in self.models:
+            return None
+        cfg = self.models[alias]
+        if not cfg.base_url:
+            from dataclasses import replace
+            cfg = replace(cfg, base_url=self.base_url)
+        return cfg
+
+    def print_routing_plan(self) -> None:
+        """Print the model routing plan — which model handles which role, and why.
+
+        This is the model-advisor surface: the user can see exactly which model
+        the pipeline will use for each phase, interview dimension, and debate
+        role, with rationale. The model-agnostic principle is preserved: the
+        user picks the model via env vars (LLM_MODEL_{ROLE}) or by editing
+        Config.phase_models / debate_models / interview_models.
+        """
+        rationale = getattr(self, "model_rationale", {})
+        print("=" * 72)
+        print("MODEL ROUTING PLAN (model advisor)")
+        print("=" * 72)
+        print(f"Provider:           {self.base_url}")
+        print(f"Default override:   LLM_DEFAULT_MODEL=<alias>")
+        print()
+        print("--- Pipeline phases ---")
+        for role, alias in self.phase_models.items():
+            model = self.models.get(alias)
+            model_name = model.name if model else "?"
+            env_var = f"LLM_MODEL_{role.upper()}"
+            reason = rationale.get(role, "(no rationale recorded)")
+            print(f"  {role:22s} -> {alias:18s} ({model_name})")
+            print(f"    reason:   {reason}")
+            print(f"    override: export {env_var}=<alias>")
+        print()
+        print("--- Interview dimensions ---")
+        for role, alias in self.interview_models.items():
+            model = self.models.get(alias)
+            model_name = model.name if model else "?"
+            env_var = f"LLM_MODEL_{role.upper()}"
+            reason = rationale.get(role, "(no rationale recorded)")
+            print(f"  {role:22s} -> {alias:18s} ({model_name})")
+            print(f"    reason:   {reason}")
+            print(f"    override: export {env_var}=<alias>")
+        print()
+        print("--- Debate court roles ---")
+        for role, alias in self.debate_models.items():
+            model = self.models.get(alias)
+            model_name = model.name if model else "?"
+            env_var = f"LLM_MODEL_{role.upper()}"
+            reason = rationale.get(role, "(no rationale recorded)")
+            print(f"  {role:22s} -> {alias:18s} ({model_name})")
+            print(f"    reason:   {reason}")
+            print(f"    override: export {env_var}=<alias>")
+        print()
+        print("--- Available model aliases (self.models) ---")
+        for alias, cfg in self.models.items():
+            print(f"  {alias:18s} -> {cfg.name}  (temp={cfg.temperature}, max_tokens={cfg.max_tokens})")
+        print()
+        print("--- Embeddings (opt-in via LLM_ENABLE_EMBEDDINGS=1) ---")
+        emb = self.embeddings
+        print(f"  enabled:    {emb.enabled}")
+        print(f"  mode:       {emb.mode}    (none | local | remote)")
+        print(f"  local:      {emb.local_model}    (requires sentence-transformers install)")
+        print(f"  remote:     alias={emb.remote_model_alias}    (uses LLM API /v1/embeddings)")
+        print()
+        print("Override examples:")
+        print("  export LLM_MODEL_DRAFT=flash               # use fast model for drafting")
+        print("  export LLM_MODEL_CRITIQUE=deepseek          # use deepseek for critique")
+        print("  export LLM_MODEL_LORE_PROSECUTOR=kimi-balanced")
+        print("  export LLM_ENABLE_EMBEDDINGS=1              # turn on semantic retrieval")
+        print("  export LLM_EMBEDDING_MODE=remote            # use LLM API for embeddings")
+        print("=" * 72)
 
     def model_for_benchmark(self, alias: str) -> ModelConfig:
         """Get model config for benchmark variants.

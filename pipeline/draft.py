@@ -539,7 +539,8 @@ def run_draft(
             all_chapters.append(ch)
 
     if not all_chapters:
-        raise ValueError("No chapters found in outline")
+        print("    WARNING: Outline has no chapters; skipping drafting phase")
+        return []
 
     # Initialize semantic embedding store (replaces BM25)
     store = EmbeddingStore(os.path.join(project_dir, "embeddings.db"))

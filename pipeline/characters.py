@@ -70,7 +70,14 @@ def run_characters(spec: dict, world: dict) -> dict:
         world_context = world.get("world_name", "") + "\n"
         factions = world.get("factions", [])
         if factions:
-            faction_names = [f.get("name", "?") for f in factions[:3]]
+            faction_names = []
+            for f in factions[:3]:
+                if isinstance(f, dict):
+                    faction_names.append(f.get("name", "?"))
+                elif isinstance(f, str):
+                    faction_names.append(f)
+                else:
+                    faction_names.append(str(f))
             world_context += f"Key factions: {', '.join(faction_names)}"
         central_conflict = world.get("central_conflict", "")
         if central_conflict:

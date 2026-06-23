@@ -221,9 +221,15 @@ def run_outline(spec: dict, world: dict, characters: dict, structure: str = "thr
         wc = world.get("central_conflict", "")
         factions = world.get("factions", [])
         if factions:
-            wc += "\nFactions: " + ", ".join(
-                f.get("name", "?") for f in factions[:4]
-            )
+            faction_strs = []
+        for f in factions[:4]:
+            if isinstance(f, dict):
+                faction_strs.append(f.get("name", "?"))
+            elif isinstance(f, str):
+                faction_strs.append(f)
+            else:
+                faction_strs.append(str(f))
+        wc += "\nFactions: " + ", ".join(faction_strs)
         world_context = wc[:500]
 
     target_chapters = spec.get("target_chapters", 12)

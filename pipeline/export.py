@@ -44,8 +44,16 @@ def build_manuscript_markdown(
 
         if isinstance(world, dict) and world.get("world_name"):
             f.write(f"## Setting: {world['world_name']}\n\n")
-            if world.get("geography"):
-                f.write(f"{world['geography'][:500]}\n\n")
+            geo = world.get("geography")
+            if geo:
+                # geography may be string, list, or dict — coerce to readable text
+                if isinstance(geo, dict):
+                    geo_text = ", ".join(f"{k}: {v}" for k, v in geo.items())
+                elif isinstance(geo, list):
+                    geo_text = ", ".join(str(g) for g in geo)
+                else:
+                    geo_text = str(geo)
+                f.write(f"{geo_text[:500]}\n\n")
 
         if isinstance(characters, dict):
             char_list = characters.get("characters", [])
@@ -54,7 +62,8 @@ def build_manuscript_markdown(
                 for c in char_list:
                     name = c.get("name", "?")
                     role = c.get("role", "?")
-                    f.write(f"- **{name}** ({role}): {c.get('personality', '')[:100]}\n")
+                    personality = c.get("personality") or c.get("arc") or c.get("background") or ""
+                f.write(f"- **{name}** ({role}): {personality[:100]}\n")
                 f.write("\n---\n\n")
 
         for ch in chapters:

@@ -145,6 +145,7 @@ def run_full_pipeline(
     auto_style_extract: bool = False,
     enable_knowledge_base: bool = True,
     enable_validate_outline: bool = True,
+    project_dir_override: Optional[str] = None,
 ) -> str:
     """Run the full StoryForge pipeline from seed to export.
 
@@ -167,6 +168,9 @@ def run_full_pipeline(
         auto_style_extract: Auto-extract style profiles after each chapter
         enable_knowledge_base: Enable lazy-loaded reference knowledge for debate agents
         enable_validate_outline: Run outline structural validation between phase 4 and 5
+        project_dir_override: If provided, use this directory instead of computing
+            project_dir from config.project_dir + slugified concept. Useful for
+            tests and callers that need a fixed output path.
 
     Returns:
         str: Path to the project output directory
@@ -180,8 +184,11 @@ def run_full_pipeline(
     print()
 
     # Determine project directory
-    project_slug = slugify(concept)[:40]
-    project_dir = os.path.join(config.project_dir, project_slug)
+    if project_dir_override:
+        project_dir = project_dir_override
+    else:
+        project_slug = slugify(concept)[:40]
+        project_dir = os.path.join(config.project_dir, project_slug)
     os.makedirs(project_dir, exist_ok=True)
 
     # Load checkpoints
@@ -786,8 +793,19 @@ def main():
         default="json",
         help="Memory store backend for interview answers (default: json)",
     )
+    parser.add_argument(
+        "--show-models",
+        action="store_true",
+        help="Print the model routing plan (which model handles which role) and exit. "
+             "Useful for auditing and selecting the right model for each editor role.",
+    )
 
     args = parser.parse_args()
+
+    # --show-models: print routing plan and exit (does not require API key)
+    if args.show_models:
+        Config().print_routing_plan()
+        return
 
     config = Config()
     config.require_api_key()  # Fail early with a clear message
