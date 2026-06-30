@@ -531,3 +531,262 @@ EDGE_CASES = {
         "Project dir is a symlink — should follow or warn",
     ],
 }
+
+
+# ──────────────────────────────────────────────────────────────
+# Expanded criteria (v0.5 inventory) — CLI flags, env vars, edge cases
+# ──────────────────────────────────────────────────────────────
+
+EXPANDED_CRITERIA = {
+    # Remaining CLI flags
+    "cli.project_dir_override": {
+        "feature": "StoryForge CLI — --project-dir <path>",
+        "acceptance": "Overrides default ~/storyforge-projects/<slug> output dir; path is created if missing",
+        "risk_categories": ["data integrity", "configuration"],
+    },
+    "cli.quick_flag": {
+        "feature": "StoryForge CLI — --quick",
+        "acceptance": "Accepts --quick as valid flag; routed to quick=True in run_full_pipeline",
+        "risk_categories": ["configuration"],
+    },
+    "cli.single_variant_flag": {
+        "feature": "StoryForge CLI — --single-variant",
+        "acceptance": "Accepts --single-variant; sets parallel_variants=False",
+        "risk_categories": ["configuration"],
+    },
+    "cli.single_review_flag": {
+        "feature": "StoryForge CLI — --single-review",
+        "acceptance": "Accepts --single-review; sets dual_review=False",
+        "risk_categories": ["configuration"],
+    },
+    "cli.no_backprop_flag": {
+        "feature": "StoryForge CLI — --no-backprop",
+        "acceptance": "Accepts --no-backprop; sets enable_backprop=False",
+        "risk_categories": ["configuration"],
+    },
+    "cli.no_adversarial_flag": {
+        "feature": "StoryForge CLI — --no-adversarial",
+        "acceptance": "Accepts --no-adversarial; sets enable_adversarial=False",
+        "risk_categories": ["configuration"],
+    },
+    "cli.no_iterative_backprop_flag": {
+        "feature": "StoryForge CLI — --no-iterative-backprop",
+        "acceptance": "Accepts --no-iterative-backprop; sets iterative_backprop=False (one-shot mode)",
+        "risk_categories": ["configuration"],
+    },
+    "cli.no_gbrain_flag": {
+        "feature": "StoryForge CLI — --no-gbrain",
+        "acceptance": "Accepts --no-gbrain flag without error; disables GBrain canonical store",
+        "risk_categories": ["configuration"],
+    },
+    "cli.no_reio_flag": {
+        "feature": "StoryForge CLI — --no-reio",
+        "acceptance": "Accepts --no-reio flag without error; disables ReIO context compression",
+        "risk_categories": ["configuration"],
+    },
+    "cli.feedback_flag": {
+        "feature": "StoryForge CLI — --feedback",
+        "acceptance": "Accepts --feedback flag; sets feedback_enabled=True regardless of path",
+        "risk_categories": ["configuration"],
+    },
+    "cli.no_feedback_flag": {
+        "feature": "StoryForge CLI — --no-feedback",
+        "acceptance": "Accepts --no-feedback flag; sets feedback_enabled=False regardless of path",
+        "risk_categories": ["configuration"],
+    },
+    "cli.feedback_mutual_exclusion": {
+        "feature": "StoryForge CLI — --feedback --no-feedback (both set)",
+        "acceptance": "Last flag wins; --no-feedback after --feedback means False",
+        "risk_categories": ["configuration"],
+    },
+    "cli.debate_flag": {
+        "feature": "StoryForge CLI — --debate",
+        "acceptance": "Accepts --debate flag without error; sets enable_debate=True",
+        "risk_categories": ["configuration"],
+    },
+    "cli.no_changes_flag": {
+        "feature": "StoryForge CLI — --no-changes",
+        "acceptance": "Accepts --no-changes flag; disables structured change declarations",
+        "risk_categories": ["configuration"],
+    },
+    "cli.style_profile_flag": {
+        "feature": "StoryForge CLI — --style-profile <name>",
+        "acceptance": "Accepts --style-profile with a name argument; stored in args.style_profile",
+        "risk_categories": ["configuration"],
+    },
+    "cli.auto_style_extract_flag": {
+        "feature": "StoryForge CLI — --auto-style-extract",
+        "acceptance": "Accepts --auto-style-extract flag; sets auto_style_extract=True",
+        "risk_categories": ["configuration"],
+    },
+    "cli.no_knowledge_base_flag": {
+        "feature": "StoryForge CLI — --no-knowledge-base",
+        "acceptance": "Accepts --no-knowledge-base flag; sets enable_knowledge_base=False",
+        "risk_categories": ["configuration"],
+    },
+    "cli.no_validate_outline_flag": {
+        "feature": "StoryForge CLI — --no-validate-outline",
+        "acceptance": "Accepts --no-validate-outline flag; sets enable_validate_outline=False",
+        "risk_categories": ["configuration"],
+    },
+    "cli.agents_flag": {
+        "feature": "StoryForge CLI — --agents",
+        "acceptance": "Accepts --agents flag; routes to run_showrunner_pipeline instead of run_full_pipeline",
+        "risk_categories": ["configuration"],
+    },
+    "cli.parallel_writers_default": {
+        "feature": "StoryForge CLI — --parallel-writers default",
+        "acceptance": "Default value for --parallel-writers is 3",
+        "risk_categories": ["configuration"],
+    },
+    "cli.parallel_writers_accepts_positive": {
+        "feature": "StoryForge CLI — --parallel-writers 5",
+        "acceptance": "Accepts positive integer values for --parallel-writers",
+        "risk_categories": ["configuration"],
+    },
+    "cli.model_override_flag": {
+        "feature": "StoryForge CLI — --model-override <alias>",
+        "acceptance": "Accepts --model-override with a model alias; stored in args.model_override",
+        "risk_categories": ["configuration"],
+    },
+    "cli.invalid_flag": {
+        "feature": "StoryForge CLI — unknown flag",
+        "acceptance": "Unknown flag is rejected by argparse with non-zero exit",
+        "risk_categories": ["error handling"],
+    },
+
+    # Environment variables
+    "env.base_url_override": {
+        "feature": "Config — LLM_BASE_URL override",
+        "acceptance": "Setting LLM_BASE_URL changes Config().base_url from the default",
+        "risk_categories": ["configuration"],
+    },
+    "env.crofai_fallback": {
+        "feature": "Config — CROFAI_API_KEY fallback",
+        "acceptance": "When LLM_API_KEY is not set but CROFAI_API_KEY is, Config uses CROFAI_API_KEY",
+        "risk_categories": ["security", "configuration"],
+    },
+    "env.embedding_model_vars": {
+        "feature": "Config — LLM_EMBEDDING_LOCAL_MODEL / LLM_EMBEDDING_REMOTE_ALIAS",
+        "acceptance": "Setting LLM_EMBEDDING_LOCAL_MODEL or LLM_EMBEDDING_REMOTE_ALIAS overrides defaults",
+        "risk_categories": ["configuration"],
+    },
+
+    # API client expanded
+    "api.truncation_retry": {
+        "feature": "CrofaiClient — truncation retry triggers re-issue",
+        "acceptance": "When parse_json_output detects TRUNCATED response via _looks_truncated, chat_parse_with_retry re-issues the chat",
+        "risk_categories": ["error handling", "data integrity"],
+    },
+    "api.cache_disabled_default": {
+        "feature": "CrofaiClient — cache disabled by default",
+        "acceptance": "Without use_cache=True, no cache directory or files are created",
+        "risk_categories": ["performance"],
+    },
+    "api.timeout_retry": {
+        "feature": "CrofaiClient — timeout retry then fail",
+        "acceptance": "API timeout raises RuntimeError which chat_with_retry retries up to max_retries times before re-raising",
+        "risk_categories": ["error handling"],
+    },
+
+    # Pipeline expanded
+    "phase.fact_check_no_chapters": {
+        "feature": "Fact-check — skipped when no chapters exist",
+        "acceptance": "run_fact_check returns SKIPPED status when chapters dir is empty or missing",
+        "risk_categories": ["error handling", "edge case"],
+    },
+    "phase.quick_skips_valid_flags": {
+        "feature": "Pipeline — --quick with --no-backprop and --no-adversarial",
+        "acceptance": "Combined flags do not cause double-skip logging or error",
+        "risk_categories": ["configuration"],
+    },
+
+    # Edge cases
+    "edge.concept_empty_string": {
+        "feature": "Edge — empty string concept",
+        "acceptance": "Empty concept string after strip is rejected by argparse or handled gracefully, not silently allowed",
+        "risk_categories": ["error handling", "security"],
+    },
+    "edge.concept_shell_metacharacters": {
+        "feature": "Edge — concept with shell metacharacters",
+        "acceptance": "Slugify sanitizes shell metacharacters; no shell injection possible via concept name",
+        "risk_categories": ["security"],
+    },
+    "edge.concept_unicode_rtl": {
+        "feature": "Edge — concept with Unicode RTL override",
+        "acceptance": "Slugify strips or normalizes bidirectional control characters",
+        "risk_categories": ["security", "data integrity"],
+    },
+    "edge.concept_null_bytes": {
+        "feature": "Edge — concept with null bytes",
+        "acceptance": "Null bytes in concept are rejected or stripped, not passed to filesystem",
+        "risk_categories": ["security"],
+    },
+    "edge.project_dir_symlink": {
+        "feature": "Edge — project dir is a symlink",
+        "acceptance": "Pipeline follows symlinks without error for output directory",
+        "risk_categories": ["data integrity"],
+    },
+    "edge.project_dir_permission_denied": {
+        "feature": "Edge — permission denied on project_dir",
+        "acceptance": "Pipeline fails with clear error message when project dir cannot be created",
+        "risk_categories": ["error handling"],
+    },
+    "edge.chapter_binary_file": {
+        "feature": "Edge — chapter directory contains binary files",
+        "acceptance": "Non-.md files in chapters dir are ignored, not read as text",
+        "risk_categories": ["data integrity", "error handling"],
+    },
+    "edge.large_outline_many_chapters": {
+        "feature": "Edge — outline with 50+ chapters",
+        "acceptance": "Outline validation and chapter counting handles 50+ chapters without O(n²) crash",
+        "risk_categories": ["performance", "data integrity"],
+    },
+
+    # Interview expanded
+    "interview.resume_all_answers_complete": {
+        "feature": "Interview — resume when all answers already present",
+        "acceptance": "On resume with fully answered checkpoint, returns immediately without re-prompting",
+        "risk_categories": ["UX", "idempotency"],
+    },
+    "interview.drilling_followups_stored": {
+        "feature": "Interview — drilling follow-up answers stored correctly",
+        "acceptance": "Follow-up answers via drilling are stored with is_follow_up=True, same dimension and question_id prefix",
+        "risk_categories": ["data integrity"],
+    },
+    "interview.context_monitor_at_threshold": {
+        "feature": "Interview — context monitor fires at exactly 70%",
+        "acceptance": "Warning triggers when accumulated tokens >= 0.7 * model_limit; one-shot only",
+        "risk_categories": ["UX", "performance"],
+    },
+}
+
+MORE_EDGE_CASES = {
+    "flag combinations": [
+        "--interactive --genre fantasy — genre filters interview questions",
+        "--interactive --resume <dir> — mutual exclusion should error or last-wins",
+        "--quick --no-backprop — both skip backprop, should not double-log",
+        "--benchmark --show-models — exit after show-models, never runs benchmark",
+    ],
+    "data integrity (more)": [
+        "Project dir with mixed-case concept same as lower-case — should slugify consistently",
+        "Chapter file with BOM character — should not corrupt parse",
+        "Two-phase write interrupted by crash — left partial file should not be read as valid",
+        "Concurrent pipeline on same project_dir from two processes — race condition on checkpoint",
+        "Checkpoint.json with extra unknown keys — should not fail validation",
+    ],
+    "error handling (more)": [
+        "LLM returns empty list for outline chapters — should handle gracefully",
+        "LLM returns non-JSON for scoring — should fall back to mechanical-only score",
+        "File system returns EMFILE (too many open files) during draft — should not lose data",
+        "OOM during large embedding — should not crash pipeline",
+        "Storage full mid-write — pipeline should not mark phase complete",
+    ],
+    "config (more)": [
+        "LLM_MODEL_<ROLE> with empty string — should fall back, not crash",
+        "LLM_MODEL_<ROLE> with unknown role name — ignored, not error",
+        "Config singleton across threads — thread-safe read access",
+        "LLM_DEFAULT_MODEL set to unknown alias — fall back to kimi-balanced",
+        "Multiple LLM_MODEL_<ROLE> set for same underlying model — should each resolve correctly",
+    ],
+}

@@ -16,7 +16,10 @@ import threading
 from pathlib import Path
 from typing import Any, Optional, Callable
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    np = None  # numpy only needed when embeddings are enabled (opt-in)
 
 _local = threading.local()
 

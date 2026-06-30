@@ -139,7 +139,47 @@
       "fix": "Added explicit feedback_enabled=False kwarg to all run_full_pipeline calls in test_inventory_pipeline.py.",
       "verification": "test_full_pipeline_minimal and test_cached_resume_skips_completed_phases now complete without hanging",
       "status": "fixed"
+    },
+    {
+      "id": "BUG-011",
+      "title": "pipeline/__init__.py eager import of HindsightStore cascades to httpx requirement",
+      "severity": "MAJOR",
+      "module": "pipeline/__init__.py",
+      "repro": "pip install storyforge[dev]; import pipeline",
+      "evidence": "ModuleNotFoundError: No module named 'httpx'",
+      "expected": "pipeline/__init__.py should use lazy imports for optional backends",
+      "timestamp": "2026-06-30T16:25:10.287913Z"
+    },
+    {
+      "id": "BUG-012",
+      "title": "interview/__init__.py eager import cascades through chapter_feedback -> draft -> EmbeddingStore -> numpy",
+      "severity": "MAJOR",
+      "module": "interview/__init__.py",
+      "repro": "from interview.memory_store import JSONMemoryStore",
+      "evidence": "ModuleNotFoundError: No module named 'numpy'",
+      "expected": "interview/__init__.py should use lazy imports for optional modules",
+      "timestamp": "2026-06-30T16:25:10.288219Z"
+    },
+    {
+      "id": "BUG-013",
+      "title": "EmbeddingStore imports numpy at module level despite 'no numpy' default mode",
+      "severity": "MAJOR",
+      "module": "pipeline/embedding_store.py:19",
+      "repro": "LLM_ENABLE_EMBEDDINGS=0 (default); import pipeline.draft",
+      "evidence": "ModuleNotFoundError: No module named 'numpy'",
+      "expected": "numpy imported lazily inside methods that use it, not at module scope",
+      "timestamp": "2026-06-30T16:25:10.291512Z"
+    },
+    {
+      "id": "BUG-014",
+      "title": "pyproject.toml missing setuptools.packages.find directive \u2014 build fails",
+      "severity": "MAJOR",
+      "module": "pyproject.toml",
+      "repro": "pip install -e .",
+      "evidence": "error: Multiple top-level packages discovered in a flat-layout: ['agents','pipeline','interview','reference','templates']",
+      "expected": "pyproject.toml explicitly lists packages or uses src-layout",
+      "timestamp": "2026-06-30T16:25:10.291732Z"
     }
   ],
-  "next_id": 11
+  "next_id": 15
 }
