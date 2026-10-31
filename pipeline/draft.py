@@ -19,6 +19,7 @@ from pipeline.canonical_store import CanonicalStore, FileCanonicalStore, create_
 from pipeline.embedding_store import EmbeddingStore
 from pipeline.foreshadow_tracker import ForeshadowTracker, ForeshadowElement
 from pipeline.reio_compression import ReIOCompressor
+from pipeline.shape_cards import roll_card, card_lines, check_chapter, save_card, flags_from
 
 
 # Style profiles for parallel variant generation
@@ -112,6 +113,9 @@ Relevant context from earlier chapters (retrieved by relevance):
 {foreshadow_context}
 
 Style direction: {style_direction}
+
+Chapter structure card (follow every line):
+{shape_card}
 
 Write the chapter now. Focus on craft: sensory immersion, pacing, dialogue rhythm,
 interiority. Make every sentence earn its place.
@@ -273,6 +277,7 @@ def _draft_single_variant(
     hindsight_context: str = "",
     compressed_context: str = "",
     enable_changes: bool = True,
+    card_text: str = "",
     memory: Optional[RevisionMemory] = None,
 ) -> dict:
     """Draft a single variant of a chapter and score it."""
@@ -290,6 +295,7 @@ def _draft_single_variant(
         retrieved_context=retrieved_context,
         foreshadow_context=foreshadow_context,
         style_direction=style_direction,
+        shape_card=card_text,
     )
 
     if memory is not None and chapter_num > 1:
@@ -328,6 +334,7 @@ def _generate_revision_prompt(
     mechanical_score: dict,
     style_name: str,
     prose_detail: list | None = None,
+    shape_detail: list | None = None,
 ) -> str:
     """Generate a revision prompt from mechanical and prose-score weaknesses."""
     issues = []
@@ -346,6 +353,18 @@ def _generate_revision_prompt(
         if prose_issues:
             issues.append("Prose gate:")
             issues.extend(prose_issues[:6])
+            issues.append("")
+
+    # Shape card violations (structure vs rolled card)
+    if shape_detail:
+        shape_issues = []
+        for v in shape_detail:
+            shape_issues.append(
+                f"- {v['rule']} (shape): {v['fix']}"
+            )
+        if shape_issues:
+            issues.append("Shape card:")
+            issues.extend(shape_issues[:6])
             issues.append("")
 
     # Banned words
@@ -481,6 +500,7 @@ def _run_revision_loop(
                 revision_prompt = _generate_revision_prompt(
                     current_text, current_score, style_name,
                     prose_detail=current_score.get("prose_detail"),
+                    shape_detail=current_score.get("shape_violations"),
                 )
                 if not revision_prompt:
                     break
@@ -488,6 +508,7 @@ def _run_revision_loop(
             revision_prompt = _generate_revision_prompt(
                 current_text, current_score, style_name,
                 prose_detail=current_score.get("prose_detail"),
+                shape_detail=current_score.get("shape_violations"),
             )
             if not revision_prompt:
                 break
@@ -722,6 +743,12 @@ def run_draft(
                 critical_state=hindsight_context if canonical.enabled else None,
             )
 
+        # --- Chapter shape card (structure context) ---
+        card_flags = flags_from(chapter_spec)
+        chapter_card = roll_card(card_flags)
+        save_card(project_dir, chapter_num, chapter_card, card_flags)
+        card_text = chr(10).join(card_lines(chapter_card))
+
         print(f"  Drafting Chapter {chapter_num}/{total}: {chapter_title}...")
         print(f"    POV: {pov} | Model: {model.name}")
 
@@ -745,6 +772,7 @@ def run_draft(
                 retrieved_context=retrieved_context,
                 foreshadow_context=foreshadow_context,
                 style_direction=style_desc, style_name=style_name,
+                card_text=card_text,
                 config=config, scorer=scorer, chapter_spec=chapter_spec,
                 hindsight_context=hindsight_context,
                 compressed_context=compressed_context,
@@ -762,6 +790,7 @@ def run_draft(
                     foreshadow_context=foreshadow_context,
                     hindsight_canonical_state=hindsight_context or "[No additional canonical state available]",
                     style_direction=style_desc,
+                    shape_card=card_text,
                 )
             )
             total_output_tokens += _estimate_tokens(variant_result["content"])
@@ -788,6 +817,10 @@ def run_draft(
             else:
                 variant_result["revisions"] = 0
 
+            # Shape-card check on the final content
+            shape_v = check_chapter(variant_result["content"], chapter_card)
+            variant_result["score"]["shape_violations"] = shape_v
+
             variants.append(variant_result)
             print(f"      Score: {variant_result['score']['total_score']}/10 | "
                   f"{variant_result['score']['word_count']} words | "
@@ -806,7 +839,12 @@ def run_draft(
         best = variants[0]
         best_content = best["content"]
         best_score = best["score"]
-        memory.record(chapter_num, best_score.get("prose_violations", []))
+        shape_names = [v["rule"] if isinstance(v, dict) else v
+                       for v in best_score.get("shape_violations", [])]
+        memory.record(
+            chapter_num,
+            best_score.get("prose_violations", []) + shape_names,
+        )
         best_style = best["variant"]
 
         if num_variants > 1:
