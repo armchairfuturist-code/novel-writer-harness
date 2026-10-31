@@ -2,9 +2,9 @@ name: tests
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
-    branches: [main]
+    branches: [master]
 
 jobs:
   test:
@@ -24,3 +24,15 @@ jobs:
         run: ruff check .
       - name: Run tests
         run: python -m pytest tests/ -v
+
+  prose-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package
+        run: pip install -e .
+      - name: Gate reference chapters on the deterministic prose instrument
+        run: python -m pipeline.prose_lab reference/chapters/*.md

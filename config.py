@@ -63,6 +63,13 @@ class ChapterConfig:
 
 
 @dataclass
+class ProseConfig:
+    """Deterministic prose gate (pipeline.prose_lab), independent of any model."""
+    min_prose_score: float = 7.0          # chapters below this trigger revision
+    min_variant_word_ratio: float = 0.5   # variants below this share of target
+
+
+@dataclass
 class DebateConfig:
     """Configuration for the Triadic Constraint Debate Protocol (SGDD)."""
     max_debate_rounds: int = 2               # Cross-examination round limit (plus 2 eval + 1 verdict = 5 total calls)
@@ -234,6 +241,12 @@ class Config:
 
         # --- Chapter defaults ---
         self.chapter = ChapterConfig()
+
+        self.prose: ProseConfig = ProseConfig()
+        if os.environ.get("LLM_MIN_PROSE_SCORE"):
+            self.prose.min_prose_score = float(os.environ["LLM_MIN_PROSE_SCORE"])
+        if os.environ.get("LLM_MIN_VARIANT_RATIO"):
+            self.prose.min_variant_word_ratio = float(os.environ["LLM_MIN_VARIANT_RATIO"])
 
         # --- Banned words / cliche list (autonovel-inspired) ---
         self.banned_words: list[str] = [

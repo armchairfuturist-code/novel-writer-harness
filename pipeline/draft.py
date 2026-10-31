@@ -164,6 +164,13 @@ def _get_chapter_text(chapter_file: str) -> str:
 # ---------------------------------------------------------------------------
 # Chapter Scorer (mechanical)
 # ---------------------------------------------------------------------------
+from pipeline.prose_lab import (
+    analyze as prose_analyze,
+    penalise_length as prose_length_penalty,
+    revision_lines as prose_revision_lines,
+)
+from pipeline.revision_memory import RevisionMemory
+
 
 class ChapterScorer:
     """Mechanical scoring for chapter quality (autonovel-inspired immune system)."""
@@ -209,12 +216,20 @@ class ChapterScorer:
         dialogue_lines = len(re.findall(r'["\u201c][^"\u201d]*["\u201d]', text))
         dialogue_ratio = dialogue_lines / max(word_count, 1)
 
-        base_score = 7.0
-        base_score += banned_penalty * 0.5
+        mech_score = 10.0
+        mech_score += banned_penalty * 0.5
         if tell_ratio > self.config.scoring.show_dont_tell_threshold:
-            base_score -= (tell_ratio - self.config.scoring.show_dont_tell_threshold) * 3
-        base_score += pacing_score * 0.5
-        base_score = max(0, min(10, base_score))
+            mech_score -= (tell_ratio - self.config.scoring.show_dont_tell_threshold) * 3
+        mech_score += pacing_score * 0.5
+        mech_score = max(0.0, min(10.0, mech_score))
+
+        prose = prose_analyze(text, self.config.prose.min_prose_score)
+        length_pen = prose_length_penalty(word_count, self.config.chapter.target_words_per_chapter)
+
+        # composite: mechanical plus the deterministic prose instrument,
+        # then the length floor so a stub cannot win on style alone.
+        total = 0.45 * mech_score + 0.55 * prose["prose_score"] - length_pen
+        total = max(0.0, min(10.0, total))
 
         return {
             "word_count": word_count,
@@ -223,7 +238,12 @@ class ChapterScorer:
             "tell_ratio": round(tell_ratio, 3),
             "pacing_variance": round(std_dev, 1),
             "dialogue_ratio": round(dialogue_ratio, 4),
-            "total_score": round(base_score, 1),
+            "prose_score": prose["prose_score"],
+            "prose_pass": prose["pass"],
+            "prose_violations": [v["rule"] for v in prose["violations"] if not v.get("under_band")],
+            "prose_detail": prose["violations"],
+            "length_penalty": length_pen,
+            "total_score": round(total, 1),
         }
 
 
@@ -253,6 +273,7 @@ def _draft_single_variant(
     hindsight_context: str = "",
     compressed_context: str = "",
     enable_changes: bool = True,
+    memory: Optional[RevisionMemory] = None,
 ) -> dict:
     """Draft a single variant of a chapter and score it."""
     prompt = CHAPTER_DRAFT_TEMPLATE.format(
@@ -270,6 +291,10 @@ def _draft_single_variant(
         foreshadow_context=foreshadow_context,
         style_direction=style_direction,
     )
+
+    if memory is not None and chapter_num > 1:
+        for line in memory.prompt_lines():
+            prompt += line + "\n"
 
     content = client.chat_with_retry(
         model,
@@ -302,9 +327,26 @@ def _generate_revision_prompt(
     chapter_text: str,
     mechanical_score: dict,
     style_name: str,
+    prose_detail: list | None = None,
 ) -> str:
-    """Generate a revision prompt from mechanical score weaknesses."""
+    """Generate a revision prompt from mechanical and prose-score weaknesses."""
     issues = []
+
+    # Deterministic prose gate (non-model instrument): tells, rhythm, lexis.
+    if prose_detail:
+        prose_issues = []
+        for v in prose_detail:
+            if v.get("under_band"):
+                continue
+            band = v["band"]
+            band_txt = f"{band[0]}-{band[1]}" if isinstance(band, list) else str(band)
+            prose_issues.append(
+                f"- {v['rule']} ({v['category']}): {v['rate_per_1k']}/1k vs band {band_txt}. {v['fix']}"
+            )
+        if prose_issues:
+            issues.append("Prose gate:")
+            issues.extend(prose_issues[:6])
+            issues.append("")
 
     # Banned words
     if mechanical_score["banned_words_found"]:
@@ -385,8 +427,15 @@ def _run_revision_loop(
     debate_ran = False
     declared_changes = None
 
+    def needs_revision(score: dict) -> bool:
+        """Round 0 fires on score below floor OR prose below the gate."""
+        return (
+            score["total_score"] < threshold
+            or not score.get("prose_pass", True)
+        )
+
     for round_num in range(max_rounds):
-        if current_score["total_score"] >= threshold:
+        if not needs_revision(current_score):
             break
 
         # ── Debate Protocol (runs once, before first revision) ──────
@@ -395,7 +444,7 @@ def _run_revision_loop(
             and not debate_ran
             and canonical_store is not None
             and outline is not None
-            and current_score["total_score"] < config.debate.acceptable_mechanical_floor
+            and needs_revision(current_score)
         ):
             from pipeline.debate import run_debate
 
@@ -430,13 +479,15 @@ def _run_revision_loop(
                 print(f"        Debate failed: {e} — falling back to generic revision")
                 debate_ran = True
                 revision_prompt = _generate_revision_prompt(
-                    current_text, current_score, style_name
+                    current_text, current_score, style_name,
+                    prose_detail=current_score.get("prose_detail"),
                 )
                 if not revision_prompt:
                     break
         else:
             revision_prompt = _generate_revision_prompt(
-                current_text, current_score, style_name
+                current_text, current_score, style_name,
+                prose_detail=current_score.get("prose_detail"),
             )
             if not revision_prompt:
                 break
@@ -460,8 +511,16 @@ def _run_revision_loop(
 
             new_score = scorer.score_chapter(revised)
 
-            # Only accept revision if score improves
-            if new_score["total_score"] > current_score["total_score"]:
+            # Accept if the composite improves, or if prose violations
+            # dropped without the composite falling back below floor.
+            prose_fixed = len(new_score.get("prose_violations", [])) < len(
+                current_score.get("prose_violations", [])
+            )
+            len_ok = len(revised.split()) >= len(current_text.split()) * 0.6
+            if (
+                new_score["total_score"] > current_score["total_score"]
+                or (prose_fixed and new_score["total_score"] >= current_score["total_score"] - 0.2)
+            ) and len_ok:
                 current_text = revised
                 current_score = new_score
                 revisions_done += 1
@@ -528,6 +587,7 @@ def run_draft(
     client = CrofaiClient(config)
     model = config.model_for_phase("draft")
     scorer = ChapterScorer(config)
+    memory = RevisionMemory(project_dir)
 
     chapters_dir = os.path.join(project_dir, "chapters")
     os.makedirs(chapters_dir, exist_ok=True)
@@ -689,6 +749,7 @@ def run_draft(
                 hindsight_context=hindsight_context,
                 compressed_context=compressed_context,
                 enable_changes=enable_changes,
+                memory=memory,
             )
             total_input_tokens += _estimate_tokens(
                 CHAPTER_DRAFT_TEMPLATE.format(
@@ -732,11 +793,20 @@ def run_draft(
                   f"{variant_result['score']['word_count']} words | "
                   f"{variant_result['revisions']} revisions")
 
-        # Select best variant
-        variants.sort(key=lambda v: -v["score"]["total_score"])
+        # Select best variant. Variants below the length floor sort last:
+        # a stub must not outrank a full chapter (README v0.5 known issue).
+        floor = config.chapter.target_words_per_chapter * config.prose.min_variant_word_ratio
+
+        def variant_key(v):
+            wc = v["score"]["word_count"]
+            ok = wc >= floor
+            return (ok, v["score"]["total_score"])
+
+        variants.sort(key=variant_key, reverse=True)
         best = variants[0]
         best_content = best["content"]
         best_score = best["score"]
+        memory.record(chapter_num, best_score.get("prose_violations", []))
         best_style = best["variant"]
 
         if num_variants > 1:

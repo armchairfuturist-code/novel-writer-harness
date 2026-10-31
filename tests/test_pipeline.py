@@ -83,9 +83,12 @@ class TestChapterScorer(unittest.TestCase):
         self.assertGreater(score["tell_ratio"], 0.3)
 
     def test_empty_text(self):
+        # A stub is not scoreable: the length floor keeps it from winning
+        # on style alone (v0.5 known issue, fixed in v0.6).
         score = self.scorer.score_chapter("")
         self.assertEqual(score["word_count"], 0)
-        self.assertGreaterEqual(score["total_score"], 5.0)
+        self.assertLess(score["total_score"], 5.0)
+        self.assertFalse(score["prose_pass"])
 
 
 class TestRevisionPrompt(unittest.TestCase):

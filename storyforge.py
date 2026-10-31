@@ -390,6 +390,20 @@ def run_full_pipeline(
         print(f"\n  Chapters written: {len(chapters)} | Words: {total_words}")
         print(f"  Avg score: {avg_score:.1f}/10")
         print(f"  Time: {elapsed:.1f}s ({elapsed/60:.1f}m)\n")
+        # Persist quality record: per-chapter scores + prose numbers, trendable
+        qdir = os.path.join(project_dir, "quality")
+        os.makedirs(qdir, exist_ok=True)
+        quality = {
+            "phase": "draft",
+            "chapters": chapters,
+            "aggregate": {
+                "chapters": len(chapters),
+                "words": total_words,
+                "avg_score": round(avg_score, 2),
+            },
+        }
+        with open(os.path.join(qdir, "quality.json"), "w", encoding="utf-8") as qf:
+            json.dump(quality, qf, indent=2)
         completed.add("draft")
         _save_checkpoint(project_dir, completed)
     else:
