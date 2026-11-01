@@ -9,6 +9,7 @@ The store exposes the same search() interface in all three modes; in
 "none" mode it always returns [] and add() inserts content with NULL
 embeddings. Drop-in replacement for BM25 retriever.
 """
+from __future__ import annotations
 
 import json
 import sqlite3
