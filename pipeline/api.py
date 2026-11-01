@@ -15,8 +15,9 @@ Usage:
 import hashlib
 import json
 import os
+import random
 import time
-from typing import Optional
+from typing import Callable, Optional
 
 import httpx
 
@@ -320,6 +321,78 @@ def _is_retryable(status_code: int) -> bool:
     return status_code == 429 or (500 <= status_code < 600)
 
 
+# Retry policy by error kind (see _retry_kind). Caps are retries, not tries.
+# rate_limit: the provider asked us to slow down; back off long and few times.
+# network: timeouts and connection drops; brief, so try again a while longer.
+# other: 5xx and empty responses; usually transient, a few quick tries.
+# parse: truncated/malformed JSON; re-asking rarely helps, two linear tries.
+RETRY_CAPS: dict[str, int] = {
+    "rate_limit": 7,
+    "network": 7,
+    "other": 3,
+    "parse": 2,
+}
+
+
+def _status_of(error: BaseException) -> int:
+    """Pull an HTTP status code out of an error.
+
+    The httpx exception chained via __cause__ carries the real response; the
+    message text ("API error 429: ...") is the fallback, which is what mock
+    and streamed-error paths produce.
+    """
+    cause = getattr(error, "__cause__", None)
+    status = getattr(getattr(cause, "response", None), "status_code", 0) or 0
+    if status:
+        return int(status)
+    err_msg = str(error)
+    if "API error " in err_msg:
+        try:
+            return int(err_msg.split("API error ")[1].split(":")[0].strip())
+        except (ValueError, IndexError):
+            return 0
+    return 0
+
+
+def _retry_kind(error: BaseException) -> str:
+    """Classify an error as rate_limit | network | parse | other."""
+    status = _status_of(error)
+    if status == 429:
+        return "rate_limit"
+    if status:
+        return "other"  # 5xx; non-retryable 4xx is rejected by the caller
+    cause = getattr(error, "__cause__", None)
+    if isinstance(cause, (httpx.TimeoutException, httpx.TransportError)):
+        return "network"
+    msg = str(error)
+    low = msg.lower()
+    if "timeout" in low or "timed out" in low:
+        return "network"
+    if "connection" in low or "connect" in low or "network" in low:
+        return "network"
+    if msg.startswith("TRUNCATED:") or "Failed to parse" in msg:
+        return "parse"
+    return "other"
+
+
+def _backoff_delay(kind: str, attempt: int,
+                   rng: Optional[random.Random] = None) -> float:
+    """Seconds to wait before retry number `attempt` (0-based) of `kind`.
+
+    rate_limit: min(60, 3 * 2**n) + jitter. network and other:
+    min(30, 2 * 2**n) + jitter. parse: linear, 1s then 2s. Jitter is uniform
+    in [0, 30% of base] and comes from the caller's rng so tests can pin it.
+    """
+    if kind == "parse":
+        return float(attempt + 1)
+    if kind == "rate_limit":
+        base = min(60.0, 3.0 * (2 ** attempt))
+    else:
+        base = min(30.0, 2.0 * (2 ** attempt))
+    jitter = (rng if rng is not None else random.Random()).uniform(0.0, 0.3 * base)
+    return round(base + jitter, 3)
+
+
 class CrofaiClient:
     """HTTP client for OpenAI-compatible LLM APIs.
 
@@ -327,11 +400,20 @@ class CrofaiClient:
     Configure via LLM_BASE_URL + LLM_API_KEY env vars, or use provider-specific fallbacks.
     """
 
-    def __init__(self, config: Optional[Config] = None, use_cache: bool = False):
+    def __init__(self, config: Optional[Config] = None, use_cache: bool = False,
+                 rng: Optional[random.Random] = None,
+                 sleeper: Optional[Callable[[float], None]] = None):
         self.config = config or Config()
         self.config.require_api_key()  # Validate key exists before making requests
         self._http = httpx.Client(timeout=600.0)
         self.use_cache = use_cache
+        # Retry-policy seams: inject an rng and sleeper for deterministic tests.
+        self._rng = rng if rng is not None else random.Random()
+        self._sleeper = sleeper if sleeper is not None else time.sleep
+        if os.environ.get("LLM_RETRY_FAST") and sleeper is None:
+            # Collapse backoff in offline tests and stubbed runs, but never
+            # override an explicitly injected sleeper.
+            self._sleeper = lambda _seconds: None
 
     def __enter__(self):
         return self
@@ -420,42 +502,42 @@ class CrofaiClient:
         model: ModelConfig,
         messages: list[dict],
         system_prompt: Optional[str] = None,
-        max_retries: int = 3,
+        max_retries: Optional[int] = None,
         **kwargs,
     ) -> str:
-        """Chat completion with smart retry.
+        """Chat completion with retry, classified by error kind.
 
-        Only retries on transient errors (429 rate limit, 5xx server errors).
-        401 (auth), 404, and 400 (bad request) fail immediately.
+        Kinds and caps (RETRY_CAPS): rate_limit 7, network 7, other 3,
+        parse 2. Backoff: rate_limit min(60, 3*2**n) + jitter, network and
+        other min(30, 2*2**n) + jitter, parse linear. Non-retryable statuses
+        (401, 403, 404, 400, 422) fail immediately.
+
+        Args:
+            max_retries: Optional caller override that CAPS every kind's
+                default (max_retries=1 means at most one retry of anything).
+                The kind's own cap applies when it is None.
         """
-        last_error = None
-        for attempt in range(max_retries + 1):
+        last_error: Optional[Exception] = None
+        attempt = 0
+        while True:
             try:
                 return self.chat(model, messages, system_prompt, **kwargs)
             except RuntimeError as e:
                 last_error = e
-                err_msg = str(e)
-
-                # Extract status code from error message
-                status_code = 0
-                for prefix in ["API error "]:
-                    if prefix in err_msg:
-                        try:
-                            code_str = err_msg.split(prefix)[1].split(":")[0].strip()
-                            status_code = int(code_str)
-                        except (ValueError, IndexError):
-                            pass
-                        break
-
+                status = _status_of(e)
                 # Don't retry non-transient errors
-                if status_code and not _is_retryable(status_code):
+                if status and not _is_retryable(status):
                     raise
+                kind = _retry_kind(e)
+                cap = RETRY_CAPS.get(kind, 3)
+                if max_retries is not None:
+                    cap = min(cap, max_retries)
+                if attempt >= cap:
+                    break
+                self._sleeper(_backoff_delay(kind, attempt, self._rng))
+                attempt += 1
 
-                if attempt < max_retries:
-                    delay = 2 ** (attempt + 3)
-                    time.sleep(delay)
-
-        raise RuntimeError(f"All {max_retries + 1} attempts failed: {last_error}")
+        raise RuntimeError(f"All {attempt + 1} attempts failed: {last_error}")
 
     def chat_parse_with_retry(
         self,

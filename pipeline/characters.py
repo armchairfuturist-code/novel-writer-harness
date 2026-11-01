@@ -10,6 +10,7 @@ from typing import Optional
 
 from config import Config
 from pipeline.api import CrofaiClient, parse_json_output
+from pipeline.naming import apply_registry
 
 CHAR_SYSTEM_PROMPT = """You are a character architect specializing in nuanced,
 three-dimensional characters. Create characters with genuine interiority -
@@ -99,4 +100,9 @@ def run_characters(spec: dict, world: dict) -> dict:
     )
 
     client.close()
+
+    # Naming hygiene: one canonical name per character, the title in its own
+    # field, world persons and faction names reserved, and the roster block
+    # that every later prompt carries.
+    chars = apply_registry(chars, world)
     return chars

@@ -9,6 +9,7 @@ The store exposes the same search() interface in all three modes; in
 "none" mode it always returns [] and add() inserts content with NULL
 embeddings. Drop-in replacement for BM25 retriever.
 """
+from __future__ import annotations
 
 import json
 import sqlite3
@@ -20,6 +21,14 @@ try:
     import numpy as np
 except ImportError:
     np = None  # numpy only needed when embeddings are enabled (opt-in)
+
+
+def _require_numpy() -> None:
+    """Fail with a legible message when embeddings are used without numpy."""
+    if np is None:
+        raise RuntimeError(
+            "embeddings require numpy; install with: pip install 'storyforge[embeddings]'"
+        )
 
 _local = threading.local()
 
@@ -183,6 +192,7 @@ class EmbeddingStore:
                     (chapter, section, content),
                 )
             else:
+                _require_numpy()
                 emb = np.asarray(results[0], dtype=np.float32)
                 blob = emb.tobytes()
                 cur = self.conn.execute(
@@ -204,6 +214,7 @@ class EmbeddingStore:
         rows = []
         for i, item in enumerate(items):
             if embeddings is not None and embeddings[i] is not None:
+                _require_numpy()
                 emb = np.asarray(embeddings[i], dtype=np.float32)
                 blob = emb.tobytes()
             else:
@@ -243,6 +254,7 @@ class EmbeddingStore:
         results = _embed_texts([query])
         if results is None or results[0] is None:
             return []
+        _require_numpy()
         emb = np.asarray(results[0], dtype=np.float32)
         knn = self._knn(emb, k=k, exclude=exclude)
         return [

@@ -23,6 +23,7 @@ from pipeline.api import CrofaiClient
 from pipeline.draft import (
     ChapterScorer,
     _generate_revision_prompt,
+    draw_with_length_gate,
     STYLE_PROFILES,
     DEFAULT_STYLE_PROFILES,
     DRAFT_SYSTEM_PROMPT,
@@ -95,6 +96,9 @@ def chapter_draft_with_retry(
     system_prompt: str,
     max_continuations: int = 2,
     temperature: float = 0.8,
+    target_words: int = 0,
+    max_redraws: Optional[int] = None,
+    stats: Optional[dict] = None,
 ) -> str:
     """Send a chapter-draft chat and continue if the response is truncated.
 
@@ -119,12 +123,23 @@ def chapter_draft_with_retry(
     """
     from pipeline.api import _looks_truncated_prose
 
-    content = client.chat_with_retry(
-        model,
-        messages=initial_messages,
+    prompt_text = initial_messages[-1]["content"] if initial_messages else ""
+    gate = draw_with_length_gate(
+        client, model, prompt_text,
         system_prompt=system_prompt,
         temperature=temperature,
+        target_words=target_words,
+        enable_changes=False,
+        max_redraws=max_redraws,
     )
+    content = gate["content"]
+    if isinstance(stats, dict):
+        stats.update({
+            "redraws": gate["redraws"],
+            "length_warning": gate["warning"],
+            "length_verdict": gate["verdict"]["verdict"],
+            "length_attempts": gate["attempts"],
+        })
 
     for attempt in range(max_continuations):
         if not _looks_truncated_prose(content):
@@ -262,18 +277,26 @@ class WriterAgent(StoryForgeAgent):
             if mood:
                 world_context += f"{mood[:300]}"
 
-        # Build character cast
+        # Build the character cast: roster block (canonical names, titles and
+        # how each character is addressed) over the old background lines.
         cast_lines = []
         if characters:
             char_list = characters.get("characters", characters.get("raw_characters", []))
             if isinstance(char_list, list):
                 for c in char_list:
-                    name = c.get("name", "?")
+                    if not isinstance(c, dict):
+                        continue
+                    name = c.get("display_name") or c.get("name", "?")
                     role = c.get("role", "?")
-                    bg = c.get("background", "")[:150]
+                    bg = (c.get("background") or "")[:150]
                     arc = c.get("arc", "")
                     cast_lines.append(f"- {name} ({role}): {bg} | Arc: {arc}")
-        character_cast = "\n".join(cast_lines) if cast_lines else "See character profiles above."
+        roster_block = roster_for_prompt(characters, world) if characters else ""
+        background_block = "\n".join(cast_lines) if cast_lines else "See character profiles above."
+        character_cast = (
+            (roster_block + "\n\nCast backgrounds:\n" + background_block)
+            if roster_block else background_block
+        )
 
         # Build prompt
         prompt = CHAPTER_DRAFT_TEMPLATE.format(
@@ -302,13 +325,20 @@ class WriterAgent(StoryForgeAgent):
         print(f"    [Writer:{self.agent_id}] Drafting Ch {chapter_num} ({style_name})...")
         start = time.time()
 
+        length_stats: dict = {}
         content = chapter_draft_with_retry(
             client,
             model,
             initial_messages=[{"role": "user", "content": prompt}],
             system_prompt=DRAFT_SYSTEM_PROMPT,
             temperature=0.8,
+            target_words=int(brief.get("target_words")
+                             or getattr(config.chapter, "target_words_per_chapter", 0)
+                             or 0),
+            stats=length_stats,
         )
+        if length_stats.get("length_warning"):
+            print(f"      [Writer:{self.agent_id}] WARNING: {length_stats['length_warning']}")
 
         draft_time = time.time() - start
 
@@ -388,6 +418,9 @@ class WriterAgent(StoryForgeAgent):
                 "variant": style_name,
                 "score": score,
                 "revisions_done": revisions_done,
+                "length_redraws": int(length_stats.get("redraws", 0) or 0),
+                "length_warning": length_stats.get("length_warning"),
+                "length_verdict": length_stats.get("length_verdict", ""),
                 "draft_time_seconds": round(time.time() - start, 1),
                 "character_traits": character_traits,
                 "foreshadowing_plants": foreshadowing_plants,

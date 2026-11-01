@@ -125,7 +125,10 @@ class Config:
 
         # --- Model Aliases (crofai model names) ---
         self.models = {
-            # Kimi K2.6 variants — prose-optimized, 3 variants to benchmark
+            # Kimi K2.6 variants — prose-optimized. These aliases are DEFAULTS:
+            # LLM_MODEL_{PHASE} overrides always win, and
+            # reference/benchmark-report.md plus Config.check_model_availability()
+            # decide when the defaults should be re-pointed.
             "kimi-speed": ModelConfig(name="kimi-k2.6"),
             "kimi-balanced": ModelConfig(name="kimi-k2.6-precision"),
             "kimi-precision": ModelConfig(name="kimi-k2.6-precision", max_tokens=16384),
@@ -133,7 +136,8 @@ class Config:
             "deepseek": ModelConfig(name="deepseek-v4-pro-precision", temperature=0.7, max_tokens=16384),
             # DeepSeek V4 Flash — reasoning + cheap, good for thin-area detection
             "deepseek-flash": ModelConfig(name="deepseek-v4-flash", temperature=0.3, max_tokens=8192),
-            # GLM 5.1 — reasoning-enabled, high speed, mid-tier general
+            # GLM 5.1 — reasoning-enabled, high speed, mid-tier general (same
+            # default / override / re-point policy as the Kimi aliases above)
             "glm": ModelConfig(name="glm-5.1", temperature=0.7, max_tokens=8192),
             # Qwen3.5 9B — fast/cheap for scoring
             "flash": ModelConfig(name="qwen3.5-9b", temperature=0.3, max_tokens=4096),
@@ -348,6 +352,40 @@ class Config:
             cfg = replace(cfg, base_url=self.base_url)
         return cfg
 
+    def check_model_availability(self, timeout: float = 15.0) -> dict:
+        """Check which routed model names the provider actually serves.
+
+        Never raises and never blocks for long: with no api_key, or on any
+        error from GET {base_url}/models, it returns checked=False and the
+        caller prints nothing. A model catalog is advisory — providers list
+        more or less than they serve — so a miss is a warning, not an error.
+
+        Returns {ok, checked, catalog, missing}.
+        """
+        result: dict = {"ok": False, "checked": False, "catalog": [], "missing": []}
+        if not self.api_key:
+            return result
+        try:
+            import httpx  # local import: keep config.py import-light
+            resp = httpx.get(
+                self.base_url.rstrip("/") + "/models",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+            ids = [m.get("id") for m in (payload.get("data") or [])
+                   if isinstance(m, dict) and m.get("id")]
+        except Exception:
+            return result
+        result["checked"] = True
+        result["catalog"] = sorted(ids)
+        routed = {cfg.name for cfg in self.models.values()}
+        routed |= {cfg.name for cfg in getattr(self, "benchmark_models", {}).values()}
+        result["missing"] = sorted(routed - set(ids))
+        result["ok"] = not result["missing"]
+        return result
+
     def print_routing_plan(self) -> None:
         """Print the model routing plan — which model handles which role, and why.
 
@@ -397,6 +435,9 @@ class Config:
         print("--- Available model aliases (self.models) ---")
         for alias, cfg in self.models.items():
             print(f"  {alias:18s} -> {cfg.name}  (temp={cfg.temperature}, max_tokens={cfg.max_tokens})")
+        availability = self.check_model_availability()
+        if availability["checked"] and availability["missing"]:
+            print(f"  WARNING: provider catalog does not list: {', '.join(availability['missing'])} (aliases are defaults; override with LLM_MODEL_{{PHASE}} or re-point via reference/benchmark-report.md)")
         print()
         print("--- Embeddings (opt-in via LLM_ENABLE_EMBEDDINGS=1) ---")
         emb = self.embeddings

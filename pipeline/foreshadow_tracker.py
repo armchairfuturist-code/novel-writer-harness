@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from pipeline.state_io import atomic_write_json
+
 # ── constants ───────────────────────────────────────────────────
 
 URGENCY_TIER_1 = 0       # must resolve this chapter
@@ -135,7 +137,8 @@ class ForeshadowTracker:
             "elements": {eid: e.to_dict() for eid, e in self._elements.items()},
             "chapter": self._chapter,
         }
-        self.path.write_text(json.dumps(data, indent=2))
+        # Atomic: the ledger is the one artifact a long run cannot re-derive.
+        atomic_write_json(self.path, data)
         self._dirty = False
 
     def save_if_dirty(self) -> None:

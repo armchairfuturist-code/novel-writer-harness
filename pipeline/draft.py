@@ -105,6 +105,8 @@ Character arc beat: {character_arc_beat}
 
 World context / setting: {world_context}
 
+{roster}
+
 {hindsight_canonical_state}
 
 Relevant context from earlier chapters (retrieved by relevance):
@@ -174,6 +176,9 @@ from pipeline.prose_lab import (
     revision_lines as prose_revision_lines,
 )
 from pipeline.revision_memory import RevisionMemory
+from pipeline.naming import NO_ROSTER, roster_for_prompt
+from pipeline.prose_lab import length_verdict, length_distance, LENGTH_LO, LENGTH_HI
+from pipeline.state_io import atomic_write_text
 
 
 class ChapterScorer:
@@ -252,6 +257,100 @@ class ChapterScorer:
 
 
 # ---------------------------------------------------------------------------
+# Length gate: redraw, never pad
+# ---------------------------------------------------------------------------
+
+# Redraws allowed before the gate gives up and records a warning instead.
+MAX_LENGTH_REDRAWS = 2
+
+
+def draw_with_length_gate(
+    client: CrofaiClient,
+    model,
+    prompt: str,
+    system_prompt: Optional[str] = None,
+    temperature: float = 0.8,
+    target_words: int = 0,
+    enable_changes: bool = False,
+    max_redraws: Optional[int] = None,
+) -> dict:
+    """Draw one chapter and hold it to its length band.
+
+    The rule follows lechmazur/writing's handling of overlength stories: an
+    out-of-range draft is regenerated from the SAME brief, unchanged, and the
+    first in-range response wins. Redraws are capped at ``MAX_LENGTH_REDRAWS``
+    (or ``max_redraws`` when the caller sets it); once the cap is reached the
+    closest draft is kept and a bounded warning is recorded. The gate never
+    pads and never truncates - an honest warning beats a silently repaired
+    chapter.
+
+    ``---CHANGES---`` fences are stripped before the word count, so the gate
+    measures prose and not bookkeeping.
+
+    Returns a dict with ``content``, ``declared_changes``, ``verdict``,
+    ``warning`` (empty when the band was met), ``redraws`` and ``attempts``.
+    """
+    cap = MAX_LENGTH_REDRAWS if max_redraws is None else max(0, int(max_redraws))
+    attempts = 0
+    best: Optional[dict] = None
+
+    for redraw in range(cap + 1):
+        attempts += 1
+        raw = client.chat_with_retry(
+            model,
+            messages=[{"role": "user", "content": prompt}],
+            system_prompt=system_prompt,
+            temperature=temperature,
+        )
+        content = raw or ""
+        declared_changes = None
+        if enable_changes and content:
+            from pipeline.changes import parse_changes_block
+            content, declared_changes = parse_changes_block(content)
+
+        verdict = length_verdict(_word_count(content), target_words)
+        if verdict["verdict"] == "in_range":
+            return {
+                "content": content,
+                "declared_changes": declared_changes,
+                "verdict": verdict,
+                "warning": "",
+                "redraws": redraw,
+                "attempts": attempts,
+            }
+
+        candidate = {
+            "content": content,
+            "declared_changes": declared_changes,
+            "verdict": verdict,
+            "distance": length_distance(verdict),
+        }
+        if best is None or candidate["distance"] < best["distance"]:
+            best = candidate
+
+    assert best is not None  # the loop always runs at least once
+    verdict = best["verdict"]
+    if cap:
+        warning = (
+            f"length gate not satisfied after {cap} redraw(s): "
+            f"{verdict['message']} - kept the closest draft; "
+            "no padding or truncation applied"
+        )
+    else:
+        warning = (
+            f"length gate not satisfied (redraws disabled): {verdict['message']}"
+        )
+    return {
+        "content": best["content"],
+        "declared_changes": best["declared_changes"],
+        "verdict": verdict,
+        "warning": warning,
+        "redraws": cap,
+        "attempts": attempts,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Parallel variant drafting
 # ---------------------------------------------------------------------------
 
@@ -279,6 +378,9 @@ def _draft_single_variant(
     enable_changes: bool = True,
     card_text: str = "",
     memory: Optional[RevisionMemory] = None,
+    roster_text: str = "",
+    target_words: int = 0,
+    max_redraws: Optional[int] = None,
 ) -> dict:
     """Draft a single variant of a chapter and score it."""
     prompt = CHAPTER_DRAFT_TEMPLATE.format(
@@ -296,32 +398,37 @@ def _draft_single_variant(
         foreshadow_context=foreshadow_context,
         style_direction=style_direction,
         shape_card=card_text,
+        roster=roster_text or NO_ROSTER,
     )
 
     if memory is not None and chapter_num > 1:
         for line in memory.prompt_lines():
             prompt += line + "\n"
 
-    content = client.chat_with_retry(
-        model,
-        messages=[{"role": "user", "content": prompt}],
+    gate = draw_with_length_gate(
+        client, model, prompt,
         system_prompt=DRAFT_SYSTEM_PROMPT,
         temperature=0.8,
+        target_words=target_words,
+        enable_changes=enable_changes,
+        max_redraws=max_redraws,
     )
-
-    # Parse structured change declarations from LLM output
-    declared_changes = None
-    if enable_changes:
-        from pipeline.changes import parse_changes_block
-        content, declared_changes = parse_changes_block(content)
+    content = gate["content"]
+    declared_changes = gate["declared_changes"]
 
     score = scorer.score_chapter(content)
+    score["length_verdict"] = gate["verdict"]["verdict"]
+    score["length_message"] = gate["verdict"]["message"]
+    score["length_warning"] = gate["warning"]
 
     return {
         "variant": style_name,
         "content": content,
         "score": score,
         "declared_changes": declared_changes,
+        "redraws": gate["redraws"],
+        "length_warning": gate["warning"],
+        "length_attempts": gate["attempts"],
     }
 
 
@@ -425,6 +532,7 @@ def _run_revision_loop(
     enable_debate: bool = False,
     enable_changes: bool = True,
     enable_knowledge_base: bool = True,
+    characters: Optional[dict] = None,
 ) -> tuple[str, dict, int, Optional[dict]]:
     """Run revision loop: score -> revise -> re-score up to max_rounds.
 
@@ -480,6 +588,7 @@ def _run_revision_loop(
                     enable_cross_exam=(config.debate.max_debate_rounds > 0),
                     declared_changes=declared_changes,
                     enable_knowledge_base=enable_knowledge_base,
+                    characters=characters,
                 )
                 debate_ran = True
 
@@ -612,6 +721,12 @@ def run_draft(
 
     chapters_dir = os.path.join(project_dir, "chapters")
     os.makedirs(chapters_dir, exist_ok=True)
+
+    # Roster block for every drafting prompt, and the length target the gate
+    # holds each chapter to (a brief may set its own).
+    roster_text = roster_for_prompt(characters, world)
+    default_target = int(getattr(config.chapter, "target_words_per_chapter", 0) or 0)
+    total_length_redraws = 0
 
     acts = outline.get("acts", [])
     all_chapters = []
@@ -773,6 +888,8 @@ def run_draft(
                 foreshadow_context=foreshadow_context,
                 style_direction=style_desc, style_name=style_name,
                 card_text=card_text,
+                roster_text=roster_text,
+                target_words=int(chapter_spec.get("target_words") or default_target),
                 config=config, scorer=scorer, chapter_spec=chapter_spec,
                 hindsight_context=hindsight_context,
                 compressed_context=compressed_context,
@@ -791,10 +908,12 @@ def run_draft(
                     hindsight_canonical_state=hindsight_context or "[No additional canonical state available]",
                     style_direction=style_desc,
                     shape_card=card_text,
+                    roster=roster_text or NO_ROSTER,
                 )
             )
             total_output_tokens += _estimate_tokens(variant_result["content"])
             total_variants_written += 1
+            total_length_redraws += int(variant_result.get("redraws", 0) or 0)
 
             if enable_revision:
                 revised_text, revised_score, rev_done, changes = _run_revision_loop(
@@ -807,6 +926,7 @@ def run_draft(
                     outline=outline, enable_debate=enable_debate,
                     enable_changes=enable_changes,
                     enable_knowledge_base=enable_knowledge_base,
+                    characters=characters,
                 )
                 variant_result["content"] = revised_text
                 variant_result["score"] = revised_score
@@ -824,7 +944,10 @@ def run_draft(
             variants.append(variant_result)
             print(f"      Score: {variant_result['score']['total_score']}/10 | "
                   f"{variant_result['score']['word_count']} words | "
-                  f"{variant_result['revisions']} revisions")
+                  f"{variant_result['revisions']} revisions | "
+                  f"{variant_result.get('redraws', 0)} length redraws")
+            if variant_result.get("length_warning"):
+                print(f"      WARNING: {variant_result['length_warning']}")
 
         # Select best variant. Variants below the length floor sort last:
         # a stub must not outrank a full chapter (README v0.5 known issue).
@@ -839,6 +962,13 @@ def run_draft(
         best = variants[0]
         best_content = best["content"]
         best_score = best["score"]
+        if not best_score.get("length_verdict"):
+            # The revision loop re-scores the settled text and drops the gate's
+            # verdict, so quality.json reported "". Measure what was written.
+            best_score["length_verdict"] = length_verdict(
+                _word_count(best_content),
+                config.chapter.target_words_per_chapter,
+            )["verdict"]
         shape_names = [v["rule"] if isinstance(v, dict) else v
                        for v in best_score.get("shape_violations", [])]
         memory.record(
@@ -852,10 +982,12 @@ def run_draft(
 
         # Save chapter
         chapter_file = os.path.join(chapters_dir, f"chapter-{chapter_num:03d}.md")
-        with open(chapter_file, "w", encoding="utf-8") as f:
-            f.write(f"# Chapter {chapter_num}: {chapter_title}\n\n")
-            f.write(f"> POV: {pov} | Style: {best_style} | Score: {best_score['total_score']}/10\n\n")
-            f.write(best_content)
+        atomic_write_text(
+            chapter_file,
+            f"# Chapter {chapter_num}: {chapter_title}\n\n"
+            f"> POV: {pov} | Style: {best_style} | Score: {best_score['total_score']}/10\n\n"
+            + best_content,
+        )
 
         chapter_result = {
             "chapter": chapter_num,
@@ -866,6 +998,10 @@ def run_draft(
             "summary": summary,
             "word_count": best_score["word_count"],
             "style": best_style,
+            "length_verdict": best_score.get("length_verdict", ""),
+            "length_warning": best.get("length_warning"),
+            "length_redraws": int(best.get("redraws", 0) or 0),
+            "length_attempts": best.get("length_attempts", []),
         }
         results.append(chapter_result)
         written_chapter_meta.append(chapter_result)
@@ -930,6 +1066,7 @@ def run_draft(
     print(f"  Output tokens (estimated): {total_output_tokens:,}")
     print(f"  Total variants written: {total_variants_written}")
     print(f"  Total revision rounds: {total_revisions}")
+    print(f"  Total length redraws: {total_length_redraws}")
     print(f"  Estimated cost: ${total_cost_estimate:.4f}")
 
     return results

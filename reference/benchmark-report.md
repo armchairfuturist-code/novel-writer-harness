@@ -69,3 +69,27 @@
 3. **For Act II expansion**: Add a dedicated "Mirror Technology" chapter between Ch 12 and Ch 13 exploring the tech itself
 4. **For future runs**: Pre-emptively create the chapters/ directory and specify absolute save paths
 5. **For crof.ai API**: Avoid deepseek models for prompts >2,000 chars. Kimi K2.6 and its variants handle longer context reliably
+
+---
+
+## Model routing currency (2026-11-01)
+
+The run above is a historical record: it names the models routed on that date. Aliases in
+`config.py` are defaults, not a promise, and a provider can retire one under you. Two checks
+keep them honest:
+
+- `Config.check_model_availability()` reads the provider's `/models` catalog and returns which
+  routed aliases it no longer serves. It returns `checked: false` instead of raising when no
+  key or no catalog is available. `Config.print_routing_plan()` prints the warning.
+- An env override always wins: `LLM_MODEL_DRAFT`, `LLM_MODEL_SEED`, `LLM_MODEL_LORE_PROSECUTOR`.
+
+Last external ranking consulted, [lechmazur/writing](https://github.com/lechmazur/writing)
+(pairwise, both orders; that repo carries no license, so we cite the method and vendor none of
+its data). Top of its board on 2026-11-01: Fable 5.1 (high) 3.745, Opus 5.5 (high) 3.693,
+Opus 5 (xhigh) 3.685, GPT-6 Astra (high) 3.416, GLM-5.3 (max) 2.950, Kimi K3.1 Pro (high)
+2.723. Our defaults still name `kimi-k2.6-precision` and `glm-5.1`, which this board has
+passed. Re-point them only after a live run on your own provider confirms the catalog name,
+then record that run here.
+
+Its overlength rule is now our length gate: a chapter outside its target band is redrawn from
+the same brief, the first in-range response is kept, and the redraw count is logged.

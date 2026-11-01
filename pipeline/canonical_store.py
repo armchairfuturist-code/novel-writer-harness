@@ -24,6 +24,8 @@ import re
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
+from pipeline.state_io import atomic_write_json
+
 class CanonicalStore(ABC):
     """Abstract canonical state store for novel drafting.
 
@@ -207,9 +209,8 @@ class FileCanonicalStore(CanonicalStore):
     def _save(self):
         if not self.enabled:
             return
-        os.makedirs(self.project_dir, exist_ok=True)
-        with open(self._path, "w") as f:
-            json.dump(self._data, f, indent=2)
+        # Atomic: a crash mid-write must never leave a torn canonical_state.json.
+        atomic_write_json(self._path, self._data)
 
     @staticmethod
     def _empty_state() -> dict:

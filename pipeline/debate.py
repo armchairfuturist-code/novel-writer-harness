@@ -26,6 +26,7 @@ import re
 from config import Config
 from pipeline.api import CrofaiClient, parse_json_output
 from pipeline.canonical_store import CanonicalStore
+from pipeline.naming import NO_ROSTER, roster_for_prompt
 
 
 # ── Agent System Prompts ─────────────────────────────────────────────
@@ -72,6 +73,9 @@ Return a single valid JSON object (no markdown wrappers). Fields:
 """)
 
 LORE_PROSECUTOR_PROMPT = """Evaluate this chapter draft for continuity errors against the canonical record.
+
+### CHARACTER ROSTER (CANONICAL NAMES AND TITLES):
+{roster}
 
 ### CANONICAL STATE (ESTABLISHED FACTS):
 {canonical_context}
@@ -481,6 +485,7 @@ def run_debate(
     declared_changes: Optional[dict] = None,
     enable_knowledge_base: bool = True,
     knowledge_base_dir: Optional[str] = None,
+    characters: Optional[dict] = None,
 ) -> dict:
     """Run the Triadic Constraint Debate Protocol on a chapter draft.
 
@@ -550,6 +555,7 @@ def run_debate(
     lore_result = _call_agent(
         client, lore_model, LORE_PROSECUTOR_SYSTEM,
         LORE_PROSECUTOR_PROMPT.format(
+            roster=roster_for_prompt(characters) if characters else NO_ROSTER,
             canonical_context=canonical_context,
             retrieved_context=retrieved_context,
             reference_context=_render_reference(kb, "lore_prosecutor", ctx_keywords) if kb else "",
