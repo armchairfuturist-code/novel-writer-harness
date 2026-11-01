@@ -13,6 +13,9 @@ import tempfile
 import unittest
 
 from pipeline.prose_lab import analyze, bands_from, drift, measure, penalise_length, revision_lines
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 CLEAN = (
     "The dockmaster owed her money. That was the only reason to be on "
@@ -165,7 +168,7 @@ class TestCLI(unittest.TestCase):
         path = self._write(CLEAN)
         try:
             r = subprocess.run([sys.executable, "-m", "pipeline.prose_lab", path],
-                               capture_output=True, text=True, cwd="/home/alex/Projects/novel-writer-harness")
+                               capture_output=True, text=True, cwd=REPO_ROOT)
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertIn("PASS", r.stdout)
         finally:
@@ -175,7 +178,7 @@ class TestCLI(unittest.TestCase):
         path = self._write(SLOP)
         try:
             r = subprocess.run([sys.executable, "-m", "pipeline.prose_lab", path],
-                               capture_output=True, text=True, cwd="/home/alex/Projects/novel-writer-harness")
+                               capture_output=True, text=True, cwd=REPO_ROOT)
             self.assertEqual(r.returncode, 1, r.stdout)
             self.assertIn("FAIL", r.stdout)
         finally:
@@ -185,7 +188,7 @@ class TestCLI(unittest.TestCase):
         path = self._write(CLEAN)
         try:
             r = subprocess.run([sys.executable, "-m", "pipeline.prose_lab", "--json", path],
-                               capture_output=True, text=True, cwd="/home/alex/Projects/novel-writer-harness")
+                               capture_output=True, text=True, cwd=REPO_ROOT)
             data = json.loads(r.stdout)
             self.assertEqual(len(data), 1)
             self.assertIn("prose_score", data[0])
