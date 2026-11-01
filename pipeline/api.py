@@ -22,6 +22,7 @@ from typing import Callable, Optional
 import httpx
 
 from config import Config, ModelConfig
+from pipeline.state_io import atomic_write_json
 
 # Cache directory for API responses (disabled by default)
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", ".api-cache")
@@ -51,8 +52,7 @@ def _write_cache(cache_key: str, response: str):
     os.makedirs(CACHE_DIR, exist_ok=True)
     cache_path = os.path.join(CACHE_DIR, f"{cache_key}.json")
     try:
-        with open(cache_path, "w", encoding="utf-8") as f:
-            json.dump({"response": response}, f)
+        atomic_write_json(cache_path, {"response": response}, indent=None)
     except OSError:
         pass  # Cache writes are best-effort
 

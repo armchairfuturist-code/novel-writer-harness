@@ -1,4 +1,4 @@
-# Novel Writer Harness — StoryForge v0.8
+# Novel Writer Harness — StoryForge v0.9
 
 **Write a complete novel by typing one sentence.** StoryForge takes a story concept and autonomously generates a full novel — from worldbuilding and characters through to a complete manuscript with continuity verification, style control, and structured state tracking.
 
@@ -28,6 +28,14 @@ And it will:
 ---
 
 ## Key Features
+
+### v0.9: No writer truncates the file it replaces
+
+- **Every writer is atomic** — the v0.8 primitive now covers the whole tree: chapters, `spec.json`, `world.json`, `characters.json`, `outline.json`, `outline_validation.json`, `quality.json`, the review and backpropagation reports, the adversarial-edit result, the interview checkpoint and memory store, style profiles, revision plans, the API cache, `manuscript.md`, `project.json` and the EPUB. A crash, a full disk or a `kill -9` mid-write leaves the previous complete file where it was.
+- **A guard keeps it that way** — `tests/test_atomic_write_coverage.py` scans every shipped `.py` for a direct truncating handle and fails the suite when one appears. Append-only logs are exempt by rule; anything else needs a `# atomic-exempt: <reason>` marker, and the reason is the point.
+- **EPUB staged, then renamed** — the pure-Python builder writes `*.epub.part` beside its target and `os.replace`s it into place, so a failed build cannot overwrite the last good book.
+- **The whole cast is listed** — *Dramatis Personae* in `manuscript.md` used to print the last character only. It prints all of them now.
+- **A capped reference block says so** — `KnowledgeBase.get_references()` names what the token budget cut, inside the block and on `last_budget_dropped` / `last_budget_truncated`.
 
 ### v0.8: Durability and an offline smoke test
 
@@ -309,6 +317,18 @@ The mechanical scorer starts at a 7.0 baseline and applies penalties for banned 
 
 **Fixed in v0.8.** `prose_lab.length_verdict()` is a gate, not a hint: a chapter outside 75-135% of its target word count is redrawn from the same brief, and a stub under `MIN_WORDS_FOR_SCORE` cannot win variant selection at all. The redraw count is logged per chapter, so a run can be audited. The rule follows the overlength handling in [lechmazur/writing](https://github.com/lechmazur/writing): regenerate from the same prompt, keep the first in-range response.
 
+### A capped reference block looked complete
+
+`debate.py` asks the knowledge base for at most 500 tokens. When a query matched more than that, the block stopped mid-file or skipped files with no trace, so the court argued from a partial rule and called it the whole rule.
+
+**Fixed in v0.9.** The block carries a budget note naming what was cut short and what was left out, and the `KnowledgeBase` keeps the same facts on `last_budget_truncated` and `last_budget_dropped` for logs.
+
+### Export wrote one character, and could truncate the manuscript
+
+`build_manuscript_markdown()` streamed straight into `manuscript.md` through `open(..., "w")`, so a crash mid-export left a half-written book where the complete one stood. Its *Dramatis Personae* loop also wrote its two lines one indent level out of the loop body, which listed the last character only.
+
+**Fixed in v0.9.** The manuscript is assembled in memory and lands in one `atomic_write_text`; the EPUB is staged as `.part` and renamed into place; the cast list prints every character. `tests/test_export_atomicity.py` pins all three.
+
 ---
 
 ## Story structures
@@ -357,7 +377,7 @@ pip install pytest
 pytest tests/ -v
 ```
 
-813 tests (811 pass offline; two need a live API key) covering: the v0.8 additions - atomic state writes, retry by error kind, the name registry and roster hygiene, the length gate and its redraws, and the offline seed-phrase smoke run - plus all pipeline phases, debate court (3 agents + cross-examination), change declarations (parse, apply, format), style engine (extraction, profiles, comparison), knowledge base (load, match, cap, semantic-rescue), outline validator (formatting, all 5 dimensions), canonical store (7-state foreshadowing machine, ABC contract), rhetorical strategies, scoring mechanics, BM25 retrieval, revision prompt generation, backpropagation, adversarial editing, ReIO compression, iterative backprop, genre templates, an...
+830 tests (828 pass offline; two need a live API key) covering: the v0.9 additions - the atomic-write coverage guard, export atomicity and the full cast list, and the reference budget note - the v0.8 additions - atomic state writes, retry by error kind, the name registry and roster hygiene, the length gate and its redraws, and the offline seed-phrase smoke run - plus all pipeline phases, debate court (3 agents + cross-examination), change declarations (parse, apply, format), style engine (extraction, profiles, comparison), knowledge base (load, match, cap, semantic-rescue), outline validator (formatting, all 5 dimensions), canonical store (7-state foreshadowing machine, ABC contract), rhetorical strategies, scoring mechanics, BM25 retrieval, revision prompt generation, backpropagation, adversarial editing, ReIO compression, iterative backprop, genre templates, an...
 
 ---
 

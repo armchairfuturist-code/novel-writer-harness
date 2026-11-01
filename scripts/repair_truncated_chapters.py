@@ -17,6 +17,7 @@ from config import Config
 from pipeline.api import CrofaiClient, _looks_truncated_prose
 from pipeline.draft import DRAFT_SYSTEM_PROMPT
 from pathlib import Path
+from pipeline.state_io import atomic_write_text
 
 
 def trim_to_last_complete_sentence(text: str) -> str:
@@ -128,7 +129,7 @@ def repair_chapter(
             # Try to preserve the original header if there is one.
             header = text[:body_start] if body_start > 0 else ""
             final = header + new_body
-            chap_path.write_text(final, encoding="utf-8")
+            atomic_write_text(chap_path, final)
             new_count = len(final.split())
             print(f"    repaired. Now {new_count} words (+{new_count - len(text.split())})")
             return True
@@ -147,7 +148,7 @@ def repair_chapter(
     print("    WARNING: could not fully repair after 2 attempts, writing partial fix")
     header = text[:body_start] if body_start > 0 else ""
     final = header + body + "\n\n" + continuation
-    chap_path.write_text(final, encoding="utf-8")
+    atomic_write_text(chap_path, final)
     return True
 
 

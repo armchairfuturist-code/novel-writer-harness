@@ -9,7 +9,6 @@ Also generates metadata files and a manuscript status summary.
 """
 
 import html as html_mod
-import json
 import os
 import re
 import subprocess
@@ -19,6 +18,7 @@ import zipfile
 from typing import Optional
 
 from config import Config
+from pipeline.state_io import atomic_write_json, atomic_write_text
 
 
 def build_manuscript_markdown(
@@ -31,48 +31,52 @@ def build_manuscript_markdown(
 ) -> str:
     manuscript_path = os.path.join(project_dir, "manuscript.md")
 
-    with open(manuscript_path, "w", encoding="utf-8") as f:
-        f.write(f"# {spec.get('title', 'Untitled')}\n\n")
-        f.write(f"**Genre:** {spec.get('genre', 'Unknown')}\n\n")
-        f.write(f"**Tone:** {spec.get('tone', 'Neutral')}\n\n")
-        f.write(f"**POV:** {spec.get('pov', 'Third Limited')}\n\n")
-        f.write(f"**Word Count Target:** {spec.get('target_length', 'Unknown')}\n\n")
-        f.write("---\n\n")
-        f.write(f"*{spec.get('premise', '')}*\n\n")
-        f.write("---\n\n")
-        f.write("---\n\n")
+    parts: list[str] = []
+    parts.append(f"# {spec.get('title', 'Untitled')}\n\n")
+    parts.append(f"**Genre:** {spec.get('genre', 'Unknown')}\n\n")
+    parts.append(f"**Tone:** {spec.get('tone', 'Neutral')}\n\n")
+    parts.append(f"**POV:** {spec.get('pov', 'Third Limited')}\n\n")
+    parts.append(f"**Word Count Target:** {spec.get('target_length', 'Unknown')}\n\n")
+    parts.append("---\n\n")
+    parts.append(f"*{spec.get('premise', '')}*\n\n")
+    parts.append("---\n\n")
+    parts.append("---\n\n")
 
-        if isinstance(world, dict) and world.get("world_name"):
-            f.write(f"## Setting: {world['world_name']}\n\n")
-            geo = world.get("geography")
-            if geo:
-                # geography may be string, list, or dict — coerce to readable text
-                if isinstance(geo, dict):
-                    geo_text = ", ".join(f"{k}: {v}" for k, v in geo.items())
-                elif isinstance(geo, list):
-                    geo_text = ", ".join(str(g) for g in geo)
-                else:
-                    geo_text = str(geo)
-                f.write(f"{geo_text[:500]}\n\n")
+    if isinstance(world, dict) and world.get("world_name"):
+        parts.append(f"## Setting: {world['world_name']}\n\n")
+        geo = world.get("geography")
+        if geo:
+            # geography may be string, list, or dict - coerce to readable text
+            if isinstance(geo, dict):
+                geo_text = ", ".join(f"{k}: {v}" for k, v in geo.items())
+            elif isinstance(geo, list):
+                geo_text = ", ".join(str(g) for g in geo)
+            else:
+                geo_text = str(geo)
+            parts.append(f"{geo_text[:500]}\n\n")
 
-        if isinstance(characters, dict):
-            char_list = characters.get("characters", [])
-            if char_list:
-                f.write("## Dramatis Personae\n\n")
-                for c in char_list:
-                    name = c.get("name", "?")
-                    role = c.get("role", "?")
-                    personality = c.get("personality") or c.get("arc") or c.get("background") or ""
-                f.write(f"- **{name}** ({role}): {personality[:100]}\n")
-                f.write("\n---\n\n")
+    if isinstance(characters, dict):
+        char_list = characters.get("characters", [])
+        if char_list:
+            parts.append("## Dramatis Personae\n\n")
+            for c in char_list:
+                name = c.get("name", "?")
+                role = c.get("role", "?")
+                personality = c.get("personality") or c.get("arc") or c.get("background") or ""
+                parts.append(f"- **{name}** ({role}): {personality[:100]}\n")
+            parts.append("\n---\n\n")
 
-        for ch in chapters:
-            chapter_file = ch.get("file", "")
-            if os.path.exists(chapter_file):
-                with open(chapter_file, "r", encoding="utf-8") as cf:
-                    content = cf.read()
-                f.write(content)
-                f.write("\n\n---\n\n")
+    for ch in chapters:
+        chapter_file = ch.get("file", "")
+        if os.path.exists(chapter_file):
+            with open(chapter_file, "r", encoding="utf-8") as cf:
+                content = cf.read()
+            parts.append(content)
+            parts.append("\n\n---\n\n")
+
+    # One atomic replace: a crash mid-export can never leave a half-written
+    # manuscript where the complete previous one stood.
+    atomic_write_text(manuscript_path, "".join(parts))
 
     return manuscript_path
 
@@ -195,7 +199,11 @@ def _build_epub_from_chapters(
         slug = os.path.splitext(os.path.basename(fpath))[0]
         chapters.append((slug, title_text, text))
 
-    with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
+    # Stage the archive beside its target and rename it into place: a crash
+    # mid-build must not leave a torn .epub where the last good one stood.
+    staging_path = output_path + ".part"
+    # atomic-exempt: written to staging_path, os.replace'd onto output_path below
+    with zipfile.ZipFile(staging_path, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
 
         zf.writestr("META-INF/container.xml", """\
@@ -274,6 +282,7 @@ def _build_epub_from_chapters(
 </body>
 </html>""")
 
+    os.replace(staging_path, output_path)
     return output_path
 
 
@@ -283,13 +292,13 @@ def export_manuscript(chapters: list[dict], spec: dict, world: dict, characters:
     manuscript_path = build_manuscript_markdown(chapters, spec, world, characters, outline, project_dir)
 
     meta_path = os.path.join(project_dir, "project.json")
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump({
-            "title": spec.get("title", "Untitled"),
-            "genre": spec.get("genre", "Unknown"),
-            "chapters": len(chapters),
-            "structure": outline.get("story_structure", "three_act"),
-        }, f, indent=2)
+    _meta = {
+        "title": spec.get("title", "Untitled"),
+        "genre": spec.get("genre", "Unknown"),
+        "chapters": len(chapters),
+        "structure": outline.get("story_structure", "three_act"),
+    }
+    atomic_write_json(meta_path, _meta)
 
     pandoc_results = try_pandoc_export(manuscript_path, project_dir)
 

@@ -12,7 +12,6 @@ The Showrunner is the "director" of the multi-agent system. It:
 8. Deploys export for manuscript compilation
 """
 
-import json
 import os
 import time
 from datetime import datetime
@@ -47,6 +46,7 @@ from agents.critic import CriticAgent
 from agents.continuity import ContinuityAgent
 from pipeline.api import CrofaiClient
 from pipeline.draft import DRAFT_SYSTEM_PROMPT
+from pipeline.state_io import atomic_write_json, atomic_write_text
 
 
 # ── Parallel Execution Pool ────────────────────────────────────────────
@@ -450,8 +450,7 @@ def run_showrunner_pipeline(
     # Save planning artifacts
     for name, data in [("spec", spec), ("world", world),
                         ("characters", characters), ("outline", outline)]:
-        with open(os.path.join(project_dir, f"{name}.json"), "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        atomic_write_json(os.path.join(project_dir, f"{name}.json"), data)
 
     print(f"  [Showrunner] Novel planned: {spec.get('title', 'Untitled')}")
     print(f"  [Showrunner] Total chapters: {total_chapters}")
@@ -620,8 +619,7 @@ def run_showrunner_pipeline(
             ch_filename = f"chapter-{ch_num:03d}.md"
             ch_path = os.path.join(chapters_dir, ch_filename)
             header = f"> POV: {ch_data.get('pov', 'Unknown')} | Score: {score.get('total_score', 'N/A')}/10 | Words: {word_count}\n\n"
-            with open(ch_path, "w", encoding="utf-8") as f:
-                f.write(header + content)
+            atomic_write_text(ch_path, header + content)
 
             # Update canonical store with new chapter state.
             # FileCanonicalStore exposes store_memory(content, tags, importance),
@@ -700,8 +698,7 @@ def run_showrunner_pipeline(
         print(f"  [Critic] Weakest chapter: Ch {review_result.get('weakest_chapter', '?')}")
 
         # Save review
-        with open(os.path.join(project_dir, "review.json"), "w", encoding="utf-8") as f:
-            json.dump(review_result, f, indent=2)
+        atomic_write_json(os.path.join(project_dir, "review.json"), review_result)
 
     # ── 6. Continuity: Backward Propagation ───────────────────────────
     if enable_backprop and all_chapter_results:
@@ -720,8 +717,7 @@ def run_showrunner_pipeline(
         print(f"  [Continuity] Status: {bp_result.get('status', 'unknown')}")
         print(f"  [Continuity] Issues found: {bp_result.get('total_issues', 0)}")
 
-        with open(os.path.join(project_dir, "backpropagation.json"), "w", encoding="utf-8") as f:
-            json.dump(bp_result, f, indent=2)
+        atomic_write_json(os.path.join(project_dir, "backpropagation.json"), bp_result)
 
     # ── 7. Editor: Adversarial Tightening ─────────────────────────────
     if enable_adversarial and all_chapter_results:
@@ -740,8 +736,7 @@ def run_showrunner_pipeline(
         print(f"  [Editor] Words removed: {ae_result.get('total_words_removed', 0)}")
         print(f"  [Editor] Cut percentage: {ae_result.get('total_pct_cut', 0)}%")
 
-        with open(os.path.join(project_dir, "adversarial.json"), "w", encoding="utf-8") as f:
-            json.dump(ae_result, f, indent=2)
+        atomic_write_json(os.path.join(project_dir, "adversarial.json"), ae_result)
 
     # ── 8. Export ──────────────────────────────────────────────────────
     if all_chapter_results:

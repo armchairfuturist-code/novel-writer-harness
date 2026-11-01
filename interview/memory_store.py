@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from pipeline.gbrain_client import GBrainStore
+from pipeline.state_io import atomic_write_json
 
 
 # ── Abstract Interface ──────────────────────────────────────────────
@@ -254,10 +255,7 @@ class JSONMemoryStore(MemoryStore):
         if not self._dirty:
             return
         try:
-            self._path.write_text(
-                json.dumps(self._memories, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            atomic_write_json(self._path, self._memories)
             self._dirty = False
         except OSError:
             pass  # Best-effort persistence
