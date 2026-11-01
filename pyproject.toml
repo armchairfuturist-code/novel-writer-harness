@@ -19,6 +19,7 @@ Homepage = "https://github.com/armchairfuturist-code/novel-writer-harness"
 [project.optional-dependencies]
 dev = [
     "pytest",
+    "numpy>=1.24",
 ]
 embeddings = [
     "sentence-transformers>=2.2",
