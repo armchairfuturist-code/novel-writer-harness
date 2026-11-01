@@ -21,6 +21,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field, asdict
 from typing import Optional
+from pipeline.state_io import atomic_write_json
 
 
 # ── Style Profile Dataclass ──────────────────────────────────────────
@@ -318,8 +319,7 @@ def save_style_profile(profile: StyleProfile, project_dir: str) -> str:
     os.makedirs(styles_dir, exist_ok=True)
 
     path = os.path.join(styles_dir, f"{profile.name}.json")
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(asdict(profile), f, indent=2)
+    atomic_write_json(path, asdict(profile))
 
     return path
 

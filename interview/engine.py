@@ -27,6 +27,7 @@ from interview.cli import (
     red,
 )
 from interview.drilling import generate_follow_ups
+from pipeline.state_io import atomic_write_json
 
 CHECKPOINT_FILENAME = "interview_checkpoint.json"
 CHECKPOINT_INTERVAL = 5  # Save every N questions
@@ -114,8 +115,7 @@ def _save_checkpoint(answers: dict, project_dir: str) -> str:
     """Save interview checkpoint to disk."""
     os.makedirs(project_dir, exist_ok=True)
     path = os.path.join(project_dir, CHECKPOINT_FILENAME)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(answers, f, indent=2, ensure_ascii=False)
+    atomic_write_json(path, answers)
     return path
 
 

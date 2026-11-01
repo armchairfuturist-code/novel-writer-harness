@@ -19,6 +19,7 @@ from config import Config
 from agents.base import StoryForgeAgent, TASK_EDIT_ADVERSARIAL
 
 from pipeline.api import CrofaiClient
+from pipeline.state_io import atomic_write_text
 
 
 EDITOR_SYSTEM_PROMPT = """You are a ruthless developmental editor. Your job is to cut
@@ -204,8 +205,7 @@ class EditorAgent(StoryForgeAgent):
                         new_content = header + "\n\n" + tightened
                     else:
                         new_content = "[EDITED]\n\n" + tightened
-                    with open(ch_file, "w", encoding="utf-8") as f:
-                        f.write(new_content)
+                    atomic_write_text(ch_file, new_content)
                 except (OSError, IOError):
                     pass
 

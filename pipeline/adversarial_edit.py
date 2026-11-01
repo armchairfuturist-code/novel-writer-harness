@@ -23,6 +23,7 @@ from typing import Optional
 
 from config import Config
 from pipeline.api import CrofaiClient, parse_json_output
+from pipeline.state_io import atomic_write_text
 
 
 EDITOR_SYSTEM_PROMPT = """You are a ruthless developmental editor. Your job is to cut
@@ -250,8 +251,7 @@ def run_adversarial_edit(
             if not os.path.exists(backup_path):
                 os.rename(filepath, backup_path)
 
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(edited_content)
+            atomic_write_text(filepath, edited_content)
 
             cuts_count = len(result.get("cuts", []))
             print(

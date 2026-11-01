@@ -73,6 +73,7 @@ from agents.orchestrator import run_showrunner_pipeline
 from interview.engine import _load_checkpoint as _load_interview_checkpoint
 from pipeline.canonical_store import CanonicalStore, FileCanonicalStore, create_canonical_store
 from interview.memory_store import create_memory_store
+from pipeline.state_io import atomic_write_json, atomic_write_text
 
 BANNER = """
   +=========================================================+
@@ -109,8 +110,7 @@ def _save_checkpoint(project_dir: str, completed: set):
     """Save completed phases to checkpoint file."""
     cp_path = os.path.join(project_dir, "checkpoint.json")
     try:
-        with open(cp_path, "w") as f:
-            json.dump({"completed_phases": sorted(completed)}, f)
+        atomic_write_json(cp_path, {"completed_phases": sorted(completed)})
     except OSError:
         pass
 
@@ -212,8 +212,7 @@ def run_full_pipeline(
         print(f"  Genre: {spec.get('genre', 'Unknown')}")
         print(f"  POV: {spec.get('pov', 'Unknown')}")
         print(f"  Chapters: {spec.get('target_chapters', 'Auto')}\n")
-        with open(os.path.join(project_dir, "spec.json"), "w", encoding="utf-8") as f:
-            json.dump(spec, f, indent=2)
+        atomic_write_json(os.path.join(project_dir, "spec.json"), spec)
         _save_checkpoint(project_dir, completed)
 
     # ── Phase 1: Seed ──
@@ -227,8 +226,7 @@ def run_full_pipeline(
         print(f"  POV: {spec.get('pov', 'Unknown')}")
         print(f"  Chapters: {spec.get('target_chapters', 'Auto')}")
         print(f"  Time: {elapsed:.1f}s\n")
-        with open(os.path.join(project_dir, "spec.json"), "w", encoding="utf-8") as f:
-            json.dump(spec, f, indent=2)
+        atomic_write_json(os.path.join(project_dir, "spec.json"), spec)
         completed.add("seed")
         _save_checkpoint(project_dir, completed)
     else:
@@ -249,8 +247,7 @@ def run_full_pipeline(
                 spec["genre_template"] = genre
                 spec["genre_beats"] = template.get("beats", [])
                 spec["tracking_items"] = template.get("tracking", {}).get("must_track", [])
-                with open(os.path.join(project_dir, "spec.json"), "w", encoding="utf-8") as f:
-                    json.dump(spec, f, indent=2)
+                atomic_write_json(os.path.join(project_dir, "spec.json"), spec)
             print(f"  Template loaded.\n")
         completed.add("genre_template")
         _save_checkpoint(project_dir, completed)
@@ -263,8 +260,7 @@ def run_full_pipeline(
         elapsed = time.time() - start
         print(f"  World: {world.get('world_name', 'Generated World')}")
         print(f"  Time: {elapsed:.1f}s\n")
-        with open(os.path.join(project_dir, "world.json"), "w", encoding="utf-8") as f:
-            json.dump(world, f, indent=2)
+        atomic_write_json(os.path.join(project_dir, "world.json"), world)
         completed.add("worldbuilding")
         _save_checkpoint(project_dir, completed)
     else:
@@ -282,8 +278,7 @@ def run_full_pipeline(
         char_count = len(characters.get("characters", []))
         print(f"  Characters created: {char_count}")
         print(f"  Time: {elapsed:.1f}s\n")
-        with open(os.path.join(project_dir, "characters.json"), "w", encoding="utf-8") as f:
-            json.dump(characters, f, indent=2)
+        atomic_write_json(os.path.join(project_dir, "characters.json"), characters)
         completed.add("characters")
         _save_checkpoint(project_dir, completed)
     else:
@@ -319,8 +314,7 @@ def run_full_pipeline(
         print(f"  Acts: {act_count} | Chapters: {ch_count}")
         print(f"  Structure: {outline.get('story_structure', 'three_act')}")
         print(f"  Time: {elapsed:.1f}s\n")
-        with open(os.path.join(project_dir, "outline.json"), "w", encoding="utf-8") as f:
-            json.dump(outline, f, indent=2)
+        atomic_write_json(os.path.join(project_dir, "outline.json"), outline)
         completed.add("outline")
         _save_checkpoint(project_dir, completed)
     else:
@@ -340,8 +334,7 @@ def run_full_pipeline(
         elapsed = time.time() - start
         print(f"  Time: {elapsed:.1f}s\n")
         # Save validation report
-        with open(os.path.join(project_dir, "outline_validation.json"), "w", encoding="utf-8") as f:
-            json.dump(validation, f, indent=2)
+        atomic_write_json(os.path.join(project_dir, "outline_validation.json"), validation)
         completed.add("outline_validated")
         _save_checkpoint(project_dir, completed)
         # FAIL blocks the pipeline
@@ -402,8 +395,7 @@ def run_full_pipeline(
                 "avg_score": round(avg_score, 2),
             },
         }
-        with open(os.path.join(qdir, "quality.json"), "w", encoding="utf-8") as qf:
-            json.dump(quality, qf, indent=2)
+        atomic_write_json(os.path.join(qdir, "quality.json"), quality)
         completed.add("draft")
         _save_checkpoint(project_dir, completed)
     else:
@@ -435,8 +427,7 @@ def run_full_pipeline(
             ch_num = ch.get("chapter", 0)
             result = get_user_feedback(ch_path, ch_title, ch_num, config)
             if result["action"] == "revise" and result["revised_text"]:
-                with open(ch_path, "w", encoding="utf-8") as f:
-                    f.write(result["revised_text"])
+                atomic_write_text(ch_path, result["revised_text"])
                 ch["word_count"] = len(result["revised_text"].split())
                 revisions_made += 1
         print(f"  Revisions: {revisions_made}/{len(chapters)} chapters revised")

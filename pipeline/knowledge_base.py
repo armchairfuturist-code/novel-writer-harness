@@ -192,6 +192,10 @@ class KnowledgeBase:
         self._cache: dict[str, str] = {}          # path -> raw text
         self._metadata: dict[str, dict] = {}       # path -> frontmatter dict
         self._loaded = False
+        # What the last get_references() call had to leave out, so a caller can
+        # tell a thin answer from a capped one.
+        self.last_budget_truncated: Optional[str] = None
+        self.last_budget_dropped: list[str] = []
 
     # ── Loading ──────────────────────────────────────────────────────
 
@@ -264,30 +268,50 @@ class KnowledgeBase:
         parts = ["## Relevant Writing Theory", ""]
 
         remaining_tokens = max_tokens - _count_tokens(parts[0])
+        dropped: list[str] = []
+        truncated_topic: Optional[str] = None
         for score, rel_path, meta in scored:
             text = self._cache.get(rel_path, "")
             # Strip frontmatter from returned text
             body = _FRONTMATTER_RE.sub("", text).strip()
             token_cost = _count_tokens(body)
+            topic = meta.get("topic", rel_path)
             if token_cost <= remaining_tokens:
-                topic = meta.get("topic", rel_path)
                 parts.append(f"### {topic}")
                 parts.append(body)
                 parts.append("")
                 remaining_tokens -= token_cost + 10  # heading overhead
-            elif remaining_tokens > 50:
-                # Truncate to fit remaining budget
+            elif remaining_tokens > 50 and truncated_topic is None:
+                # Truncate to fit remaining budget - and say so. A rule cut in
+                # half reads as a whole one, and the agent acts on the half.
                 truncated = body[:remaining_tokens * 4] + "..."
-                topic = meta.get("topic", rel_path)
-                parts.append(f"### {topic} (truncated)")
+                truncated_topic = topic
+                parts.append(f"### {topic} (cut short to fit the budget)")
                 parts.append(truncated)
                 parts.append("")
-                break
+                remaining_tokens = 0
             else:
-                break
+                dropped.append(topic)
+
+        self.last_budget_truncated = truncated_topic
+        self.last_budget_dropped = list(dropped)
 
         if len(parts) <= 2:
             return ""
+
+        if truncated_topic or dropped:
+            notes = []
+            if truncated_topic:
+                notes.append(f"cut short: {truncated_topic}")
+            if dropped:
+                shown = ", ".join(dropped[:4])
+                if len(dropped) > 4:
+                    shown += ", ..."
+                notes.append(f"left out for budget: {shown} ({len(dropped)})")
+            parts.append(
+                "> Reference budget note - " + "; ".join(notes)
+                + ". Raise max_tokens or narrow the keywords to read them."
+            )
 
         return "\n".join(parts)
 

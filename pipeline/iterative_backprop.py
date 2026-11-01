@@ -10,7 +10,6 @@ Extends the base backprop module with an iterative loop:
 This replaces the one-shot scan with a proper convergence loop.
 """
 
-import json
 import os
 import re
 import time
@@ -23,6 +22,7 @@ from pipeline.backprop import (
     scan_foreshadowing_debt,
     generate_revision_instructions,
 )
+from pipeline.state_io import atomic_write_json, atomic_write_text
 
 
 
@@ -88,8 +88,7 @@ def _apply_backprop_fixes(
                 messages=[{"role": "user", "content": revision_prompt}],
                 temperature=0.5,
             )
-            with open(chap_file, "w", encoding="utf-8") as f:
-                f.write(revised)
+            atomic_write_text(chap_file, revised)
             chapters_revised += 1
             print(f"        Revised Ch {chap_num} ({len(chap_issues)} issues)")
         except RuntimeError as e:
@@ -184,8 +183,7 @@ def run_iterative_backpropagation(
         }
         if project_dir:
             rev_path = os.path.join(project_dir, f"backprop-revision-iter-{iteration + 1}.json")
-            with open(rev_path, "w", encoding="utf-8") as f:
-                json.dump(rev_plan, f, indent=2)
+            atomic_write_json(rev_path, rev_plan)
             print(f"      Revision plan saved to {rev_path}")
 
         # Apply fixes to chapter files via LLM (always — even on last iteration)
