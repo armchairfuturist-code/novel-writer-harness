@@ -22,7 +22,7 @@ dev = [
     "numpy>=1.24",
 ]
 embeddings = [
-    "sentence-transformers>=2.2",
+    "sentence-transformers>=6.2.0",
     "torch>=1.13",
 ]
 
