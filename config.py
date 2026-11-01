@@ -20,7 +20,12 @@ Usage:
 """
 
 import os
+import sys
 import json
+
+# Single source of the version string. storyforge.py --doctor, the CLI banner
+# and README.md all read this; a release tag must match it.
+VERSION = "0.10.0"
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -122,6 +127,9 @@ class Config:
             "LLM_BASE_URL", "CROFAI_BASE_URL", ""
         ) or "https://beta.crof.ai/v1"
         self.default_model: str = self._get_env("LLM_DEFAULT_MODEL", "") or ""
+        # Provenance for every role -> model resolution, read by --doctor.
+        self.resolution_log: list = []
+        self._raw_override_notes: set = set()
 
         # --- Model Aliases (crofai model names) ---
         self.models = {
@@ -296,21 +304,66 @@ class Config:
             )
         return self.api_key
 
-    def _resolve_model(self, task: str, routing: dict, fallback: str = "kimi-balanced") -> ModelConfig:
-        """Resolve a model config from routing dict, env override, and base_url.
+    def _model_from(self, alias_or_id: str) -> ModelConfig:
+        """Build a ModelConfig from a known alias or from a raw model id.
 
-        Common pattern for model_for_phase / model_for_interview / model_for_debate.
+        An alias in self.models keeps its tuned settings. Anything else is
+        taken literally as the provider's model id, which is what makes every
+        role assignable to any model by env var alone, with no edit here.
         """
-        env_key = os.environ.get(f"LLM_MODEL_{task.upper()}")
-        if env_key and env_key in self.models:
-            key = env_key
-        else:
-            key = routing.get(task, fallback)
-        cfg = self.models[key]
+        cfg = self.models.get(alias_or_id) or ModelConfig(name=alias_or_id)
         if not cfg.base_url:
             from dataclasses import replace
             cfg = replace(cfg, base_url=self.base_url)
         return cfg
+
+    def _resolve_model(self, task: str, routing: dict, fallback: str = "kimi-balanced") -> ModelConfig:
+        """Resolve a role to a model and record where the answer came from.
+
+        Order: LLM_MODEL_{ROLE} (a known alias or a raw model id), then the
+        routing table, then the fallback. LLM_MODEL_{ROLE}_BASE_URL points that
+        one role at a different provider. Every resolution appends a row to
+        self.resolution_log, so --doctor can show what each role got and why.
+        An override is never silently dropped: an unknown alias is honored as a
+        raw model id and labeled env-raw.
+        """
+        env_var = f"LLM_MODEL_{task.upper()}"
+        env_val = (os.environ.get(env_var) or "").strip()
+        env_url = (os.environ.get(f"{env_var}_BASE_URL") or "").strip()
+        if env_val:
+            key = env_val
+            source = "env-alias" if env_val in self.models else "env-raw"
+        else:
+            key = routing.get(task, fallback)
+            source = "routing"
+        if source == "env-raw":
+            self._note_raw_override(env_var, env_val)
+        cfg = self._model_from(key)
+        if env_url:
+            from dataclasses import replace
+            cfg = replace(cfg, base_url=env_url)
+        self.resolution_log.append({
+            "role": task, "model": cfg.name, "key": key,
+            "source": source, "env_var": env_var, "base_url": cfg.base_url,
+        })
+        return cfg
+
+
+    def _note_raw_override(self, env_var: str, value: str) -> None:
+        """Say once per process that an override is not a known alias.
+
+        A raw model id is a supported answer, so this is a note and not an
+        error. It turns a late 404 from a typo into something an agent sees
+        before the first call, and --doctor reports the same as env-raw.
+        """
+        note = (env_var, value)
+        if note in self._raw_override_notes:
+            return
+        self._raw_override_notes.add(note)
+        sys.stderr.write(
+            f"storyforge: {env_var}='{value}' is not a known alias; "
+            f"using it as a raw model id (storyforge.py --doctor shows every role)\n"
+        )
 
     def model_for_phase(self, phase: str) -> ModelConfig:
         """Get the best model config for a pipeline phase.
@@ -327,12 +380,8 @@ class Config:
             task: Interview dimension or task type.
             override: Optional model alias to use instead of the routed one.
         """
-        if override and override in self.models:
-            cfg = self.models[override]
-            if not cfg.base_url:
-                from dataclasses import replace
-                cfg = replace(cfg, base_url=self.base_url)
-            return cfg
+        if override:
+            return self._model_from(override)
         return self._resolve_model(task, self.interview_models)
 
     def model_for_debate(self, role: str) -> ModelConfig:
@@ -386,73 +435,98 @@ class Config:
         result["ok"] = not result["missing"]
         return result
 
-    def print_routing_plan(self) -> None:
-        """Print the model routing plan — which model handles which role, and why.
+    def resolve_routing(self, live: bool = False) -> dict:
+        """Return the whole routing plan as data, for --doctor and for tests.
 
-        This is the model-advisor surface: the user can see exactly which model
-        the pipeline will use for each phase, interview dimension, and debate
-        role, with rationale. The model-agnostic principle is preserved: the
-        user picks the model via env vars (LLM_MODEL_{ROLE}) or by editing
-        Config.phase_models / debate_models / interview_models.
+        One row per role across the three tables, each carrying the model it
+        resolves to, where that answer came from, and the env var that owns it.
+        Pass live=True to also ask the provider which model ids it serves.
         """
-        rationale = getattr(self, "model_rationale", {})
-        print("=" * 72)
+        saved = self.resolution_log
+        self.resolution_log = []
+        try:
+            roles = {}
+            for table_name, table in (
+                ("phase", self.phase_models),
+                ("interview", self.interview_models),
+                ("debate", self.debate_models),
+            ):
+                for role in table:
+                    cfg = self._resolve_model(role, table)
+                    row = dict(self.resolution_log[-1])
+                    row["table"] = table_name
+                    row["reason"] = getattr(self, "model_rationale", {}).get(role, "")
+                    roles[role] = row
+        finally:
+            self.resolution_log = saved
+        plan = {
+            "provider": self.base_url,
+            "api_key_set": bool(self.api_key),
+            "default_model": self.default_model,
+            "roles": roles,
+            "aliases": {a: c.name for a, c in self.models.items()},
+            "embeddings": {
+                "enabled": self.embeddings.enabled,
+                "mode": self.embeddings.mode,
+                "local_model": self.embeddings.local_model,
+                "remote_alias": self.embeddings.remote_model_alias,
+            },
+        }
+        if live:
+            plan["availability"] = self.check_model_availability()
+        return plan
+
+    def print_routing_plan(self) -> None:
+        """Print the routing plan: which model handles which role, and why.
+
+        The model-agnostic principle holds throughout: every role names an
+        override env var, and that var takes a known alias or any raw model id.
+        """
+        plan = self.resolve_routing(live=True)
+        rule = "=" * 72
+        print(rule)
         print("MODEL ROUTING PLAN (model advisor)")
-        print("=" * 72)
-        print(f"Provider:           {self.base_url}")
-        print(f"Default override:   LLM_DEFAULT_MODEL=<alias>")
+        print(rule)
+        print(f"Provider:           {plan['provider']}")
+        print(f"API key set:        {plan['api_key_set']}")
         print()
-        print("--- Pipeline phases ---")
-        for role, alias in self.phase_models.items():
-            model = self.models.get(alias)
-            model_name = model.name if model else "?"
-            env_var = f"LLM_MODEL_{role.upper()}"
-            reason = rationale.get(role, "(no rationale recorded)")
-            print(f"  {role:22s} -> {alias:18s} ({model_name})")
-            print(f"    reason:   {reason}")
-            print(f"    override: export {env_var}=<alias>")
-        print()
-        print("--- Interview dimensions ---")
-        for role, alias in self.interview_models.items():
-            model = self.models.get(alias)
-            model_name = model.name if model else "?"
-            env_var = f"LLM_MODEL_{role.upper()}"
-            reason = rationale.get(role, "(no rationale recorded)")
-            print(f"  {role:22s} -> {alias:18s} ({model_name})")
-            print(f"    reason:   {reason}")
-            print(f"    override: export {env_var}=<alias>")
-        print()
-        print("--- Debate court roles ---")
-        for role, alias in self.debate_models.items():
-            model = self.models.get(alias)
-            model_name = model.name if model else "?"
-            env_var = f"LLM_MODEL_{role.upper()}"
-            reason = rationale.get(role, "(no rationale recorded)")
-            print(f"  {role:22s} -> {alias:18s} ({model_name})")
-            print(f"    reason:   {reason}")
-            print(f"    override: export {env_var}=<alias>")
-        print()
+        headings = (("phase", "Pipeline phases"), ("interview", "Interview dimensions"), ("debate", "Debate court roles"))
+        for table, heading in headings:
+            print(f"--- {heading} ---")
+            for role, row in plan["roles"].items():
+                if row["table"] != table:
+                    continue
+                print(f"  {role:22s} -> {row['key']:18s} ({row['model']})  [{row['source']}]")
+                if row["reason"]:
+                    print(f"    reason:   {row['reason']}")
+                print(f"    override: export {row['env_var']}=<alias or model id>")
+            print()
         print("--- Available model aliases (self.models) ---")
-        for alias, cfg in self.models.items():
-            print(f"  {alias:18s} -> {cfg.name}  (temp={cfg.temperature}, max_tokens={cfg.max_tokens})")
-        availability = self.check_model_availability()
-        if availability["checked"] and availability["missing"]:
-            print(f"  WARNING: provider catalog does not list: {', '.join(availability['missing'])} (aliases are defaults; override with LLM_MODEL_{{PHASE}} or re-point via reference/benchmark-report.md)")
+        for alias, name in plan["aliases"].items():
+            cfg = self.models[alias]
+            print(f"  {alias:18s} -> {name}  (temp={cfg.temperature}, max_tokens={cfg.max_tokens})")
+        availability = plan.get("availability") or {}
+        if availability.get("checked") and availability.get("missing"):
+            print(
+                "  WARNING: provider catalog does not list: "
+                + ", ".join(availability["missing"])
+                + " (aliases are defaults; override with LLM_MODEL_{ROLE} or re-point via reference/benchmark-report.md)"
+            )
         print()
+        emb = plan["embeddings"]
         print("--- Embeddings (opt-in via LLM_ENABLE_EMBEDDINGS=1) ---")
-        emb = self.embeddings
-        print(f"  enabled:    {emb.enabled}")
-        print(f"  mode:       {emb.mode}    (none | local | remote)")
-        print(f"  local:      {emb.local_model}    (requires sentence-transformers install)")
-        print(f"  remote:     alias={emb.remote_model_alias}    (uses LLM API /v1/embeddings)")
+        print(f"  enabled:    {emb['enabled']}")
+        print(f"  mode:       {emb['mode']}    (none | local | remote)")
+        print(f"  local:      {emb['local_model']}    (requires sentence-transformers install)")
+        print(f"  remote:     alias={emb['remote_alias']}    (uses LLM API /v1/embeddings)")
         print()
-        print("Override examples:")
-        print("  export LLM_MODEL_DRAFT=flash               # use fast model for drafting")
-        print("  export LLM_MODEL_CRITIQUE=deepseek          # use deepseek for critique")
-        print("  export LLM_MODEL_LORE_PROSECUTOR=kimi-balanced")
+        print("Override examples (any OpenAI-compatible model id works):")
+        print("  export LLM_MODEL_DRAFT=flash                # a known alias")
+        print("  export LLM_MODEL_DRAFT=gpt-5.2              # a raw model id")
+        print("  export LLM_MODEL_DRAFT_BASE_URL=https://api.openai.com/v1")
         print("  export LLM_ENABLE_EMBEDDINGS=1              # turn on semantic retrieval")
-        print("  export LLM_EMBEDDING_MODE=remote            # use LLM API for embeddings")
-        print("=" * 72)
+        print(rule)
+
 
     def model_for_benchmark(self, alias: str) -> ModelConfig:
         """Get model config for benchmark variants.

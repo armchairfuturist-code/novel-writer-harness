@@ -1,4 +1,4 @@
-# Novel Writer Harness — StoryForge v0.9
+# Novel Writer Harness — StoryForge v0.10
 
 **Write a complete novel by typing one sentence.** StoryForge takes a story concept and autonomously generates a full novel — from worldbuilding and characters through to a complete manuscript with continuity verification, style control, and structured state tracking.
 
@@ -27,104 +27,41 @@ And it will:
 
 ---
 
-## Key Features
-
-### v0.9: No writer truncates the file it replaces
-
-- **Every writer is atomic** — the v0.8 primitive now covers the whole tree: chapters, `spec.json`, `world.json`, `characters.json`, `outline.json`, `outline_validation.json`, `quality.json`, the review and backpropagation reports, the adversarial-edit result, the interview checkpoint and memory store, style profiles, revision plans, the API cache, `manuscript.md`, `project.json` and the EPUB. A crash, a full disk or a `kill -9` mid-write leaves the previous complete file where it was.
-- **A guard keeps it that way** — `tests/test_atomic_write_coverage.py` scans every shipped `.py` for a direct truncating handle and fails the suite when one appears. Append-only logs are exempt by rule; anything else needs a `# atomic-exempt: <reason>` marker, and the reason is the point.
-- **EPUB staged, then renamed** — the pure-Python builder writes `*.epub.part` beside its target and `os.replace`s it into place, so a failed build cannot overwrite the last good book.
-- **The whole cast is listed** — *Dramatis Personae* in `manuscript.md` used to print the last character only. It prints all of them now.
-- **A capped reference block says so** — `KnowledgeBase.get_references()` names what the token budget cut, inside the block and on `last_budget_dropped` / `last_budget_truncated`.
-
-### v0.8: Durability and an offline smoke test
-
-- **Atomic state writes** — `pipeline/state_io.py` writes canonical state and the foreshadow tracker through a temp file, an fsync and `os.replace`, so an interrupt cannot leave a half-written JSON behind.
-- **Retry by error kind** — `pipeline/api.py` separates rate limits, network faults, parse faults and other faults, each with its own cap and jittered backoff. Auth faults still fail at once.
-- **Name registry and roster hygiene** — `pipeline/naming.py` gives each character one canonical name, a separate title and a form of address. Draft and debate prompts carry the roster and end with "Never invent names that are not in the roster."
-- **Hard length gate** — a chapter outside 75-135% of its target is redrawn from the same brief, up to twice. After the cap the best candidate is kept with a recorded warning. No silent padding.
-- **Seed-phrase smoke test** — `python3 scripts/smoke.py "one sentence"` runs the whole pipeline offline against a deterministic stub provider. No API key, no network.
-
-### v0.5: The Quality Layer
-
-#### Outline Structural Validator (`pipeline/outline_validator.py`)
-
-A single-LLM-call pre-draft quality gate that runs between outline generation and chapter drafting. Checks five structural dimensions:
-
-| Dimension | Severity | What it checks |
-|---|---|---|
-| **Character coverage** | FAIL if broken | Every named character must appear in ≥1 chapter |
-| **Foreshadowing completeness** | WARN only | Every plant needs a payoff chapter within range |
-| **Emotional arc progression** | FAIL if 5+ flat | No 3+ consecutive chapters with identical arcs |
-| **Beat density balance** | FAIL if empty | Every chapter must have ≥1 key_event and ≥1 character_arc_beat |
-| **Information boundaries** | FAIL if impossible | POV characters can't narrate events they couldn't witness |
-
-FAILs pause the pipeline with a clear report. WARNs display but let you continue. One call to the `deepseek-flash` model — deterministic, <$0.01 per check. On by default; `--no-validate-outline` to skip.
-
-#### Structured Change Declarations (`pipeline/changes.py`)
-
-Every chapter draft and revision outputs a `---CHANGES---` JSON block declaring exactly what changed across 12 categories: character status, conflict progress, plot nodes, foreshadowing actions, location changes, faction changes, time advancement, character movement, item transfers, secret reveals, oath changes, and deadline changes. The system parses this block, strips it from the prose, and deterministically updates the canonical store from the LLM's own declarations — replacing passive state extraction with active state declaration. Combined with the debate court, the Magistrate can cross-validate declared changes against continuity complaints.
+## Run it
 
 ```bash
-python storyforge.py "concept"           # change declarations on by default
-python storyforge.py "concept" --no-changes  # fall back to passive extraction
+git clone https://github.com/armchairfuturist-code/novel-writer-harness
+cd novel-writer-harness
+python3 -m pip install -r requirements.txt
+python3 storyforge.py --doctor                 # orientation: no API key, no network
+python3 scripts/smoke.py "a lighthouse keeper adopts a shipwrecked child" --chapters 2
+export LLM_API_KEY="..." LLM_BASE_URL="https://your-provider/v1"
+python3 storyforge.py "a jazz musician heals wounds with her trumpet, and each healing steals a memory"
 ```
 
-The architecture draws from [tianming-novel-ai-writer](https://github.com/zy-zmc/tianming-novel-ai-writer)'s 15-dimension fact snapshot and 12-class change declaration system.
+The smoke run proves the whole pipeline end to end without a key. Everything
+after it is a real run against your provider.
 
-#### Style Engine (`pipeline/style_engine.py`)
+## What is new in v0.10
 
-A pure-Python prose feature extractor that computes 10 quantitative dimensions from raw text with zero LLM cost: sentence rhythm (mean + standard deviation), paragraph length, dialogue density, vocabulary tier, sensory density per 1000 words, pacing profile (action/reflection/description ratios), POV distance (close 3rd vs omniscient), hook density, and 6-emotion emotional register. Profiles are saved as JSON to `styles/` and can be bound to chapters to shape prose more precisely than the 4 hardcoded rhetorical strategies. Includes `compare_profiles()` for style drift detection between chapters.
+- `storyforge.py --doctor` is the front door: version, provider, every role's
+  resolved model and where that answer came from, the newest project's state,
+  the guard list, and the next command. `--json` for a program, `--live` to also
+  ask the provider what it serves.
+- Any model can hold any role. `LLM_MODEL_{ROLE}` takes a known alias or a raw
+  provider model id, and `LLM_MODEL_{ROLE}_BASE_URL` moves one role to a second
+  provider. Nothing is silently dropped.
+- `AGENTS.md` is the agent contract and `docs/ARCHITECTURE.md` is the six-level
+  tower, each level with its contract, its files, its guard test and how to
+  extend it.
+- Four new guard tests hold those claims, including one that fails when a
+  document names a flag or an environment variable the code does not have.
 
-```bash
-python storyforge.py "concept" --style-profile chapter-001  # bind a saved profile
-python storyforge.py "concept" --auto-style-extract        # save per-chapter profiles
-```
-
-Inspired by [AI-Novel-Writing-Assistant](https://github.com/ExplosiveCoderflome/AI-Novel-Writing-Assistant)'s writing style engine.
-
-#### Lazy-Loaded Writing Theory Knowledge Base (`pipeline/knowledge_base.py` + 10 reference files)
-
-10 curated markdown files on writing theory organized by agent role. The debate court's Lore Prosecutor and Plot Sentinel load relevant references on demand — ≤500 tokens each — sharpening their complaints with concrete craft knowledge rather than relying on prompt-alone reasoning:
-
-| Agent | Reference files |
-|---|---|
-| **Lore Prosecutor** | Character trait tracking, worldbuilding consistency, timeline continuity, contradiction patterns |
-| **Plot Sentinel** | Foreshadowing payoff patterns, pacing diagnostics, outline beat compliance |
-| **Mechanical Magistrate** | Actionable revision instruction writing |
-| **Drafting** | Chapter hook techniques (13 end + 7 open patterns), dialogue craft, sensory immersion |
-
-Each file is 50-200 lines of specific advice with examples, tagged with YAML frontmatter for keyword-based relevance matching. The `KnowledgeBase` class scores files by overlap with chapter context and returns only the best matches within a token budget.
-
-**Semantic rescue:** the `ctx_keywords` extracted from chapter content (title words + top-10 most-frequent content words) often use prose vocabulary that doesn't literally match a file's abstract frontmatter keywords. A `KEYWORD_SYNONYMS` map in `pipeline/knowledge_base.py` bridges the gap (e.g. `scar → {trait, physical, description}` so a chapter about "Mira's scar" surfaces `character-trait-tracking.md` instead of returning an empty reference). Without the rescue, ~29% of chapter critiques would have run with no writing-theory context; with it, that gap is closed without changing the agent's interface. See `reference/knowledge/README.md` for retrieval semantics and how to extend the synonym map.
-
-### v0.4: Triadic Constraint Debate Protocol (SGDD) — opt-in with `--debate`
-
-The debate protocol replaces the generic mechanical revision prompt with a **state-grounded dialectical debate** between three specialized verification agents. Instead of "fix these banned words," the revision loop gets canon-grounded instructions like "Fix Alice's eye color: canon says blue, draft says green."
-
-| Agent | Grounding | What it checks | Model |
-|---|---|---|---|
-| **Lore Prosecutor** | `canonical_state.json` + KB refs | Continuity breaks, trait drift, world-building violations, timeline errors | DeepSeek V4 Pro |
-| **Plot Sentinel** | Foreshadow state machine + outline beats + KB refs | Overdue threads, spontaneous plants, missed milestones, pacing violations | Kimi K2.6 |
-| **Mechanical Magistrate** | Both transcripts + mechanical scores + change declarations | Reconciles conflicts, cross-validates declared changes against complaints, outputs deterministic revision manifest | Qwen3.5 9B |
-
-The debate loop runs: parallel evaluation → cross-examination (up to 2 rounds) → magistrate verdict. If any FATAL continuity break is found, the chapter is forced into revision with the manifest as its revision prompt. Configurable via `config.debate.*` thresholds. Adds 3-5 LLM calls per chapter revision.
-
-### v0.3: Foundation Systems
-
-- **Canonical state store** (`canonical_state.json`) — character traits, world facts, plot threads, foreshadowing debts tracked chapter by chapter with word-overlap relevance scoring
-- **7-state foreshadowing machine** — `planted → hinted → reinforced → due → overdue → paid` (plus `abandoned`)
-- **4 rhetorical strategies** (Postwriter-inspired) — suspense_first, reveal_late, sensory_immersion, interiority_forward
-- **ReIO context compression** — forgetting-curve compression for long novels; recent chapters full fidelity, middle chapters condensed, early chapters arc-summarized
-- **Iterative backward propagation** — scans chapters for contradictions, generates revisions, re-scans until clean
-- **5 genre templates** — mystery, thriller, romance, fantasy, sci-fi with structured beats, required elements, and tracking items
-- **Semantic context retrieval** — `sentence-transformers/all-MiniLM-L6-v2` embedding search over prior chapters (replaces BM25 keyword matching)
-- **Dual-persona review** — Literary Critic + Professor of Fiction debate each chapter's quality
-- **Adversarial editing** — LLM identifies weakest 15% of each chapter by cut category (filler, redundancy, over-explanation, weak verb, telling, pacing drag)
-- **Chapter feedback loop** — post-chapter review with user-in-the-loop revision
-- **Checkpoint/resume** — auto-detects completed phases, resumes from interruption without data loss
+`docs/CHANGELOG.md` carries every version, including the durability, quality,
+debate and foundation work below v0.10.
 
 ---
+
 
 ## How it uses different AI models
 
@@ -154,7 +91,11 @@ export LLM_MODEL_SEED="claude-sonnet-4-20250514"    # override planning model
 | Debate: Magistrate | fast/cheap model | Conflict resolution, mechanical reconciliation |
 | Scoring, canonical state, style | built-in (no API) | Regex, word-overlap, Counter — zero cost |
 
-Change routing defaults in `config.py`. Any OpenAI-compatible API works.
+Change routing defaults in `config.py`. Any OpenAI-compatible API works, and
+a role override takes a raw model id as happily as an alias, so pointing
+drafting at a model this repo has never heard of needs no edit here.
+`python3 storyforge.py --show-models` prints all 21 roles with the variable
+that owns each, and `--doctor` reports the same as data.
 
 Aliases are defaults, not a promise: a provider can retire a model under you. `Config.check_model_availability()` reads the provider's `/models` list and names every routed alias the catalog no longer serves, and `Config.print_routing_plan()` prints that warning. An env override such as `LLM_MODEL_DRAFT` always wins, and `reference/benchmark-report.md` records the last measured ranking.
 
@@ -221,9 +162,13 @@ Add `--live` to run the same path against a real provider, `--dir PATH --keep` t
 
 | Command | What it does |
 |---|---|
+| `python storyforge.py --doctor` | Orientation: version, provider, roles, project state, guards, next command |
+| `python storyforge.py --doctor --json` | The same report as data |
+| `python storyforge.py --doctor --live` | Also ask the provider which model ids it serves |
+| `python storyforge.py --show-models` | Every role, its model, its reason, and the env var that owns it |
 | `python storyforge.py "concept"` | Full pipeline: seed analysis through export |
 | `python storyforge.py --quick "concept"` | Skip review, backprop, and adversarial phases |
-| `python storyforge.py --resume 7` | Resume drafting from chapter 7 (recovery mode) |
+| `python storyforge.py --resume DIR` | Resume an interrupted run from its project directory |
 | `python storyforge.py --debate "concept"` | Enable debate court — LLM agents cross-examine each chapter |
 | `python storyforge.py --no-changes "concept"` | Disable structured change declarations |
 | `python storyforge.py --no-knowledge-base "concept"` | Disable writing theory reference injection |
@@ -273,41 +218,50 @@ After the pipeline finishes, your novel lives here:
 
 ## Architecture
 
-StoryForge has a modular pipeline design — each phase is a standalone module that can be composed, skipped, or replaced:
+Six levels, each with one contract and one guard test. `docs/ARCHITECTURE.md`
+is the full map, and `python3 storyforge.py --doctor` reports the live state of
+all six without an API key.
+
+| Level | What it is | Where |
+|---|---|---|
+| L0 Contract | A seed phrase in, a manuscript out | `storyforge.py`, `doctor.py` |
+| L1 Phases | seed, world, characters, outline, validation, draft, score, critique, review, backprop, adversarial, export | `pipeline/`, `agents/` |
+| L2 Roles | Every phase asks for a model by role, never by name | `config.py` |
+| L3 Services | API client, prose lab, knowledge base, style engine, canonical store | `pipeline/` |
+| L4 State | Atomic writes, one checkpoint, one canonical truth | `pipeline/state_io.py` |
+| L5 Evidence | Scores, redraws, budget notes, routing provenance, the smoke run | `doctor.py`, `scripts/smoke.py` |
 
 ```
-storyforge.py                       # CLI entry point (argparse, checkpoint mgmt)
+storyforge.py                       # CLI entry point, phase orchestration, checkpointing
+doctor.py                           # --doctor: the orientation report (no key, no network)
+config.py                           # VERSION, model aliases, role routing, every threshold
 pipeline/
-├── api.py                          # CrofaiClient (httpx, 600s timeout, 3x retry 429/5xx, JSON repair)
-├── config.py                       # Model routing, scoring thresholds, DebateConfig, StyleConfig
-├── canonical_store.py              # ABC + FileCanonicalStore (character traits, world facts, threads, 7-state foreshadowing)
-├── changes.py                      # v0.5: structured ---CHANGES--- block parser + 12-category store applier
-├── style_engine.py                 # v0.5: pure-Python StyleProfile extractor (10 dimensions)
-├── knowledge_base.py               # v0.5: lazy-loaded writing theory references for debate agents
-├── debate.py                       # v0.4: Lore Prosecutor + Plot Sentinel + Mechanical Magistrate
-├── outline_validator.py            # v0.5: pre-draft 5-dimension structural quality gate
-├── draft.py                        # Chapter writing, revision loop, parallel variants, change declaration integration
-├── review.py                       # Dual-persona literary critique (Critic + Professor → synthesis)
-├── backprop.py / iterative_backprop.py  # Forward contradiction scanning, foreshadowing debt tracking
-├── adversarial_edit.py             # LLM + mechanical prose tightening (15% cut target)
-├── factcheck.py                    # Regex-based cross-chapter consistency verification
-├── reio_compression.py             # Forgetting-curve context compression for long novels
-├── foreshadow_tracker.py           # 7-state machine with auto-detection from chapter text
-├── embedding_store.py              # sentence-transformers + SQLite semantic chapter retrieval
-├── seed.py / worldbuilding.py / characters.py / outline.py  # Planning phases
-└── export.py                       # Manuscript assembly + Pandoc PDF/EPUB
-reference/
-├── knowledge/                      # 10 lazy-loaded writing theory reference files
-│   ├── lore-prosecutor/            # Trait tracking, world consistency, timeline, contradictions
-│   ├── plot-sentinel/              # Foreshadowing, pacing, outline compliance
-│   ├── magistrate/                 # Actionable revision instruction writing
-│   └── drafting/                   # Hook techniques, dialogue craft, sensory immersion
-└── chapters/                       # Reference novel sample
-tests/                              # 448+ unit tests (all phases, debate, changes, style engine, KB)
-templates/                          # 5 genre JSON templates (mystery, thriller, romance, fantasy, sci-fi)
+├── api.py                          # CrofaiClient: one door to every model, retries by error kind, JSON repair
+├── state_io.py                     # atomic_write_text / atomic_write_json: the only way to write a file
+├── canonical_store.py              # ABC + FileCanonicalStore: traits, world facts, threads, foreshadowing
+├── changes.py                      # ---CHANGES--- parser and the 12-category store applier
+├── prose_lab.py                    # the deterministic prose gate, no model involved
+├── knowledge_base.py               # lazy-loaded writing theory under a token budget
+├── debate.py                       # Lore Prosecutor, Plot Sentinel, Mechanical Magistrate
+├── outline_validator.py            # the pre-draft structural gate, five dimensions
+├── draft.py                        # chapter writing, revision loop, parallel rhetorical variants
+├── review.py                       # dual-persona literary critique
+├── backprop.py / iterative_backprop.py   # contradiction scanning, foreshadowing debt
+├── adversarial_edit.py             # model plus mechanical tightening
+├── factcheck.py                    # regex cross-chapter consistency
+├── reio_compression.py             # forgetting-curve compression for long novels
+├── foreshadow_tracker.py           # seven-state machine with auto-detection
+├── embedding_store.py              # optional semantic chapter retrieval
+├── style_engine.py                 # voice fingerprints and drift checks
+├── seed.py / worldbuilding.py / characters.py / outline.py   # the planning phases
+└── export.py                       # manuscript assembly, Pandoc PDF and EPUB
+reference/knowledge/                # the writing-theory files the knowledge base loads
+templates/                          # five genre templates
+tests/                              # the suite, including the guard tests named in AGENTS.md
 ```
 
 ---
+
 
 ## Known Issues
 
@@ -377,7 +331,7 @@ pip install pytest
 pytest tests/ -v
 ```
 
-830 tests (828 pass offline; two need a live API key) covering: the v0.9 additions - the atomic-write coverage guard, export atomicity and the full cast list, and the reference budget note - the v0.8 additions - atomic state writes, retry by error kind, the name registry and roster hygiene, the length gate and its redraws, and the offline seed-phrase smoke run - plus all pipeline phases, debate court (3 agents + cross-examination), change declarations (parse, apply, format), style engine (extraction, profiles, comparison), knowledge base (load, match, cap, semantic-rescue), outline validator (formatting, all 5 dimensions), canonical store (7-state foreshadowing machine, ABC contract), rhetorical strategies, scoring mechanics, BM25 retrieval, revision prompt generation, backpropagation, adversarial editing, ReIO compression, iterative backprop, genre templates, an...
+863 tests (861 pass offline; two need a live API key) covering: the v0.10 additions - the orientation report, the model-agnostic role contract, and the four guard tests that hold them - the v0.9 additions - the atomic-write coverage guard, export atomicity and the full cast list, and the reference budget note - the v0.8 additions - atomic state writes, retry by error kind, the name registry and roster hygiene, the length gate and its redraws, and the offline seed-phrase smoke run - plus all pipeline phases, debate court (3 agents + cross-examination), change declarations (parse, apply, format), style engine (extraction, profiles, comparison), knowledge base (load, match, cap, semantic-rescue), outline validator (formatting, all 5 dimensions), canonical store (7-state foreshadowing machine, ABC contract), rhetorical strategies, scoring mechanics, BM25 retrieval, revision prompt generation, backpropagation, adversarial editing, ReIO compression, iterative backprop, genre templates, an...
 
 ---
 
