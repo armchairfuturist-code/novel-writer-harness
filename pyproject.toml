@@ -22,7 +22,7 @@ dev = [
 ]
 embeddings = [
     "sentence-transformers>=2.2",
-    "torch>=1.13",
+    "torch>=2.14.1",
 ]
 
 [project.scripts]
