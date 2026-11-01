@@ -1,4 +1,4 @@
-# Novel Writer Harness — StoryForge v0.5
+# Novel Writer Harness — StoryForge v0.8
 
 **Write a complete novel by typing one sentence.** StoryForge takes a story concept and autonomously generates a full novel — from worldbuilding and characters through to a complete manuscript with continuity verification, style control, and structured state tracking.
 
@@ -28,6 +28,14 @@ And it will:
 ---
 
 ## Key Features
+
+### v0.8: Durability and an offline smoke test
+
+- **Atomic state writes** — `pipeline/state_io.py` writes canonical state and the foreshadow tracker through a temp file, an fsync and `os.replace`, so an interrupt cannot leave a half-written JSON behind.
+- **Retry by error kind** — `pipeline/api.py` separates rate limits, network faults, parse faults and other faults, each with its own cap and jittered backoff. Auth faults still fail at once.
+- **Name registry and roster hygiene** — `pipeline/naming.py` gives each character one canonical name, a separate title and a form of address. Draft and debate prompts carry the roster and end with "Never invent names that are not in the roster."
+- **Hard length gate** — a chapter outside 75-135% of its target is redrawn from the same brief, up to twice. After the cap the best candidate is kept with a recorded warning. No silent padding.
+- **Seed-phrase smoke test** — `python3 scripts/smoke.py "one sentence"` runs the whole pipeline offline against a deterministic stub provider. No API key, no network.
 
 ### v0.5: The Quality Layer
 
@@ -140,6 +148,8 @@ export LLM_MODEL_SEED="claude-sonnet-4-20250514"    # override planning model
 
 Change routing defaults in `config.py`. Any OpenAI-compatible API works.
 
+Aliases are defaults, not a promise: a provider can retire a model under you. `Config.check_model_availability()` reads the provider's `/models` list and names every routed alias the catalog no longer serves, and `Config.print_routing_plan()` prints that warning. An env override such as `LLM_MODEL_DRAFT` always wins, and `reference/benchmark-report.md` records the last measured ranking.
+
 ---
 
 ## Quick Start
@@ -187,6 +197,16 @@ python storyforge.py --benchmark
 
 Tests all Kimi K2.6 variants on 5 creative writing prompts, compares them head-to-head.
 
+### 6. Smoke test with no API key
+
+```bash
+python3 scripts/smoke.py "A jazz musician in 1920s New Orleans heals wounds with her trumpet" --chapters 2
+```
+
+This runs the full pipeline against a deterministic stub provider: seed, world, characters, outline, drafts, gates, export. It needs no key and makes no network call. It prints one line per phase and a final PASS or FAIL, and it exits non-zero on any failure.
+
+Add `--live` to run the same path against a real provider, `--dir PATH --keep` to inspect the output, and `--json` for a machine-readable report.
+
 ---
 
 ## Command Reference
@@ -211,6 +231,7 @@ Tests all Kimi K2.6 variants on 5 creative writing prompts, compares them head-t
 | `python storyforge.py --no-adversarial "concept"` | Skip adversarial editing pass |
 | `python storyforge.py --no-reio "concept"` | Disable ReIO context compression |
 | `python storyforge.py --help` | Show all options |
+| `python3 scripts/smoke.py "concept"` | Offline smoke test: full pipeline, stub provider, no key needed |
 
 ---
 
@@ -280,13 +301,13 @@ templates/                          # 5 genre JSON templates (mystery, thriller,
 
 ---
 
-## Known Issues (v0.5)
+## Known Issues
 
 ### Scoring favors ultra-short chapters in variant selection
 
 The mechanical scorer starts at a 7.0 baseline and applies penalties for banned words, tell-don't-show patterns, and low pacing variance. Ultra-short chapters (~100-200 words) have fewer opportunities to trigger these penalties and can outscore full-length chapters (~4000 words) that contain minor infractions. In the "The Bleeding Note" test run, Chapter 1's suspense_first variant (165 words, score 7.4) beat the reveal_late variant (4192 words, score 6.2) despite the latter being a complete chapter. The word-count penalty only triggers below 2000 words, and 165 words slipped through.
 
-**Planned fix:** add a minimum-word-count gate to variant selection — chapters below 50% of the target word count (2000 words for the 4000 default) are automatically rejected regardless of mechanical score, or at minimum heavily penalized. This is a one-line change in the variant selection logic in `draft.py`.
+**Fixed in v0.8.** `prose_lab.length_verdict()` is a gate, not a hint: a chapter outside 75-135% of its target word count is redrawn from the same brief, and a stub under `MIN_WORDS_FOR_SCORE` cannot win variant selection at all. The redraw count is logged per chapter, so a run can be audited. The rule follows the overlength handling in [lechmazur/writing](https://github.com/lechmazur/writing): regenerate from the same prompt, keep the first in-range response.
 
 ---
 
@@ -336,7 +357,7 @@ pip install pytest
 pytest tests/ -v
 ```
 
-459+ tests covering: all pipeline phases, debate court (3 agents + cross-examination), change declarations (parse, apply, format), style engine (extraction, profiles, comparison), knowledge base (load, match, cap, semantic-rescue), outline validator (formatting, all 5 dimensions), canonical store (7-state foreshadowing machine, ABC contract), rhetorical strategies, scoring mechanics, BM25 retrieval, revision prompt generation, backpropagation, adversarial editing, ReIO compression, iterative backprop, genre templates, an...
+813 tests (811 pass offline; two need a live API key) covering: the v0.8 additions - atomic state writes, retry by error kind, the name registry and roster hygiene, the length gate and its redraws, and the offline seed-phrase smoke run - plus all pipeline phases, debate court (3 agents + cross-examination), change declarations (parse, apply, format), style engine (extraction, profiles, comparison), knowledge base (load, match, cap, semantic-rescue), outline validator (formatting, all 5 dimensions), canonical store (7-state foreshadowing machine, ABC contract), rhetorical strategies, scoring mechanics, BM25 retrieval, revision prompt generation, backpropagation, adversarial editing, ReIO compression, iterative backprop, genre templates, an...
 
 ---
 
@@ -346,21 +367,21 @@ StoryForge is a combinatorial fork of ideas from these open-source projects:
 
 - **autonovel** (NousResearch) — Pipeline architecture, dual immune system, Opus dual-persona review
 - **tianming-novel-ai-writer** (zy-zmc) — 15-dimension fact snapshot, 12-class change declarations, 6-gate validation
-- **AI-Novel-Writing-Assistant** (ExplosiveCoderflome) — Style engine, Creative Hub, LangGraph agent runtime
-- **oh-story-claudecode** (worldwonderer) — 7-agent skill team, lazy-loaded 100+ reference files, 13 hook patterns
-- **NovelForge** (RhythmicWave) — Schema-first card writing, @DSL context injection, workflow-as-code
-- **dramatica-flow** (ydsgangge-ux) — Causal chain engine, information boundaries, character relationship networks
+- **AI-Novel-Writing-Assistant** (ExplosiveCoderflome, since renamed; now under a Biz Novel Studio license — AGPL-3.0 by default, with separate commercial authorization to run it as a service) — Style engine, Creative Hub, LangGraph agent runtime. Ideas and attribution only; no code was copied.
+- **oh-story-claudecode** (zenstory-ai, formerly worldwonderer; MIT) — 7-agent skill team, lazy-loaded 100+ reference files, 13 hook patterns
+- **NovelForge** (RhythmicWave; AGPL-3.0, ideas only) — Schema-first card writing, @DSL context injection, workflow-as-code
+- **dramatica-flow** (ydsgangge-ux; MIT) — Causal chain engine, information boundaries, character relationship networks. The v0.8 atomic state writes and retry-by-kind backoff follow its `core/state` and `core/llm` design.
 - **NovelClaw** (iLearn-Lab) — Dynamic memory-first workspace, inspectable runs with per-run artifacts
-- **AI_NovelGenerator** (YILING0013) — State tracking, foreshadowing management
+- **AI_NovelGenerator** (YILING0013; AGPL-3.0, structure and naming ideas only — no code copied or adapted) — State tracking, foreshadowing management
 - **gemini-writer** (Doriandarko) — 1M context auto-compression, recovery mode
 - **storycraftr** (raestrada) — Provider-agnostic config, embeddings context
 - **ai-book-writer** (adamwlarson) — Multi-agent collaboration via AutoGen
 - **NovelGenerator** (KazKozDev) — Parallel perspective tracking, emotional arcs
 - **libriscribe** (guerra2fernando) — Multi-model support, fact-checking
-- **NovelWriter** (EdwardAThomson) — Genre templates, story structures, quality analytics
+- **NovelWriter** (EdwardAThomson; MIT) — Genre templates, story structures, quality analytics. The v0.8 name registry and roster address styles follow its `NameRegistry` and `ADDRESS_STYLES`.
 - **book-generator** (wesleyscholl) — Pandoc/LaTeX export, KDP-ready output
 
-Benchmark methodology from [lechmazur/writing](https://github.com/lechmazur/writing).
+Benchmark methodology from [lechmazur/writing](https://github.com/lechmazur/writing). That repository carries no license, so we cite its method and vendor none of its data.
 
 The debate protocol was inspired by multi-agent verification patterns in code review systems, adapted for narrative continuity. The change declaration system draws from tianming's "write to 3000 chapters without relying on context" architecture. The style engine adapts feature extraction from AI-Novel-Writing-Assistant's reusable writing-style profiles. The knowledge base borrows the lazy-loaded reference pattern from oh-story-claudecode's agent skill architecture.
 
@@ -368,4 +389,4 @@ The debate protocol was inspired by multi-agent verification patterns in code re
 
 ## License
 
-MIT
+MIT for this repository. The Origins section names each upstream project and its license. Several upstreams are AGPL-3.0 or commercial, so we took ideas and attribution from them and copied no code.

@@ -328,6 +328,81 @@ def penalise_length(word_count: int, target_words: int) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Length gate: a hard verdict, not a softer score
+# ---------------------------------------------------------------------------
+
+LENGTH_LO = 0.75
+LENGTH_HI = 1.35
+
+
+def length_verdict(word_count: int, target_words: int,
+                   lo: float = LENGTH_LO, hi: float = LENGTH_HI) -> dict[str, Any]:
+    """Hard length verdict for a chapter, after lechmazur/writing's redraw rule.
+
+    Out of range means the draft is redrawn from the same brief rather than
+    padded, trimmed or scored down. MIN_WORDS_FOR_SCORE stays an absolute
+    floor: no ratio excuses a chapter too short to score. The floor scales
+    down only for a target that is itself below it, so a deliberately short
+    piece is not sent into an endless redraw loop.
+
+    Returns a dict with verdict, ratio, message, target_words, word_count,
+    floor and band. target_words <= 0 means no target was set, so the verdict
+    is in_range.
+    """
+    n_words = int(word_count or 0)
+    target = int(target_words or 0)
+    lo = float(lo) if lo and lo > 0 else LENGTH_LO
+    hi = float(hi) if hi and hi > lo else LENGTH_HI
+
+    if target <= 0:
+        return {"verdict": "in_range", "ratio": 0.0, "floor": 0,
+                "band": (0, 0), "word_count": n_words, "target_words": target,
+                "message": "no target word count set"}
+
+    ratio = round(n_words / target, 3)
+    floor = min(MIN_WORDS_FOR_SCORE, int(target * lo))
+    low_bound = int(target * lo)
+    high_bound = int(target * hi)
+
+    if n_words < floor:
+        verdict = "too_short"
+        message = (f"{n_words} words is below the {floor}-word floor "
+                   f"(target {target})")
+    elif n_words < low_bound:
+        verdict = "too_short"
+        message = (f"{n_words} words is under {lo:.0%} of the {target}-word "
+                   f"target (need {low_bound}+)")
+    elif n_words > high_bound:
+        verdict = "too_long"
+        message = (f"{n_words} words is over {hi:.0%} of the {target}-word "
+                   f"target (keep to {high_bound})")
+    else:
+        verdict = "in_range"
+        message = f"{n_words} words is within {lo:.0%}-{hi:.0%} of {target}"
+
+    return {"verdict": verdict, "ratio": ratio, "floor": floor,
+            "band": (low_bound, high_bound), "word_count": n_words,
+            "target_words": target, "message": message}
+
+
+def length_distance(verdict: dict[str, Any]) -> float:
+    """How far a verdict sits outside its band; 0.0 when in range.
+
+    Used to pick the best of several out-of-range drafts once the redraw cap
+    is reached, so a run keeps the closest text instead of the first.
+    """
+    low, high = verdict.get("band", (0, 0)) or (0, 0)
+    n_words = float(verdict.get("word_count", 0) or 0)
+    if not high:
+        return 0.0
+    if n_words < low:
+        return (low - n_words) / max(low, 1.0)
+    if n_words > high:
+        return (n_words - high) / max(high, 1.0)
+    return 0.0
+
+
+# ---------------------------------------------------------------------------
 # Voice drift: bands fitted on the manuscript itself
 # ---------------------------------------------------------------------------
 

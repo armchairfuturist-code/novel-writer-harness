@@ -128,3 +128,81 @@ class TestShowModelsFlag(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+import io
+import json
+from contextlib import redirect_stdout
+from unittest import mock
+
+
+class TestCheckModelAvailability(unittest.TestCase):
+    """AC: model availability — the advisor warns about stale aliases,
+    never guesses new names, and never raises when the provider is absent."""
+
+    def _catalog_response(self, ids):
+        fake = mock.Mock()
+        fake.json.return_value = {"data": [{"id": i} for i in ids]}
+        fake.raise_for_status.return_value = None
+        return fake
+
+    def test_no_key_never_raises(self):
+        old_key = os.environ.get("LLM_API_KEY")
+        old_crof = os.environ.pop("CROFAI_API_KEY", None)
+        os.environ["LLM_API_KEY"] = ""
+        try:
+            Config._instance = None
+            c = Config()
+            r = c.check_model_availability()
+            self.assertFalse(r["checked"])
+            self.assertFalse(r["ok"])
+            self.assertEqual(r["missing"], [])
+            self.assertEqual(r["catalog"], [])
+        finally:
+            os.environ["LLM_API_KEY"] = old_key or "test-key-no-network"
+            Config._instance = None
+
+    def test_stubbed_catalog_reports_missing_aliases(self):
+        c = Config()
+        with mock.patch("httpx.get", return_value=self._catalog_response(
+                ["qwen3.5-9b", "deepseek-v4-flash"])):
+            r = c.check_model_availability()
+        self.assertTrue(r["checked"])
+        self.assertFalse(r["ok"])
+        self.assertIn("kimi-k2.6-precision", r["missing"])
+        self.assertIn("glm-5.1", r["missing"])
+        self.assertIn("qwen3.5-9b", r["catalog"])
+
+    def test_stubbed_full_catalog_is_ok(self):
+        c = Config()
+        names = [cfg.name for cfg in c.models.values()]
+        names += [cfg.name for cfg in c.benchmark_models.values()]
+        with mock.patch("httpx.get", return_value=self._catalog_response(sorted(set(names)))):
+            r = c.check_model_availability()
+        self.assertTrue(r["checked"])
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["missing"], [])
+
+    def test_provider_error_returns_unchecked(self):
+        c = Config()
+        with mock.patch("httpx.get", side_effect=RuntimeError("no network")):
+            r = c.check_model_availability()
+        self.assertFalse(r["checked"])
+        self.assertEqual(r["catalog"], [])
+        self.assertFalse(r["ok"])
+
+    def test_routing_plan_warns_only_when_checked(self):
+        c = Config()
+        with mock.patch("httpx.get", return_value=self._catalog_response(["qwen3.5-9b"])):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                c.print_routing_plan()
+            out = buf.getvalue()
+        self.assertIn("does not list", out)
+        self.assertIn("kimi-k2.6-precision", out)
+        self.assertIn("glm-5.1", out)
+        unchecked = {"ok": False, "checked": False, "catalog": [], "missing": []}
+        with mock.patch.object(Config, "check_model_availability", return_value=unchecked):
+            buf2 = io.StringIO()
+            with redirect_stdout(buf2):
+                c.print_routing_plan()
+            self.assertNotIn("does not list", buf2.getvalue())
