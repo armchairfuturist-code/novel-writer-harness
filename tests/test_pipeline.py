@@ -187,11 +187,15 @@ class TestConfig(unittest.TestCase):
         model = c.model_for_interview("world_setting", override="flash")
         self.assertEqual(model.name, "qwen3.5-9b")
 
-    def test_model_for_interview_invalid_override(self):
-        """Invalid override key is ignored — uses routed model instead."""
+    def test_model_for_interview_override_takes_a_raw_id(self):
+        """An override that is not an alias is used as a raw model id.
+
+        Ignoring it would silently send the role to a model the operator did
+        not choose, which is the failure the model-agnostic contract forbids.
+        """
         c = Config()
         model = c.model_for_interview("drilling", override="nonexistent-alias")
-        self.assertEqual(model.name, "qwen3.5-9b")
+        self.assertEqual(model.name, "nonexistent-alias")
 
     def test_interview_models_has_all_dimensions(self):
         """All interview dimensions have a routing entry."""

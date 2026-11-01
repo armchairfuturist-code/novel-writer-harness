@@ -161,19 +161,20 @@ class TestCLIRejection(unittest.TestCase):
 
 class TestEnvVars(unittest.TestCase):
 
-    _VARS = ["LLM_API_KEY","CROFAI_API_KEY","LLM_BASE_URL","LLM_DEFAULT_MODEL",
-             "LLM_ENABLE_EMBEDDINGS","LLM_EMBEDDING_MODE",
-             "LLM_EMBEDDING_LOCAL_MODEL","LLM_EMBEDDING_REMOTE_ALIAS"]
+    _PREFIXES = ("LLM_", "CROFAI_")
 
     def setUp(self):
-        self._saved = {k: os.environ.get(k) for k in self._VARS}
+        # Snapshot every provider env var, not a hand-kept list: a role
+        # override set by one test used to leak into every later test.
+        self._saved = {k: v for k, v in os.environ.items() if k.startswith(self._PREFIXES)}
         os.environ["LLM_API_KEY"] = "test-key"
         Config._instance = None
 
     def tearDown(self):
-        for k,v in self._saved.items():
-            if v is not None: os.environ[k] = v
-            else: os.environ.pop(k, None)
+        for k, v in self._saved.items():
+            os.environ[k] = v
+        for k in [k for k in os.environ if k.startswith(self._PREFIXES) and k not in self._saved]:
+            os.environ.pop(k, None)
         Config._instance = None
 
     def test_base_url(self):
@@ -228,10 +229,10 @@ class TestEnvVars(unittest.TestCase):
         Config._instance = None
         self.assertEqual(Config().model_for_phase("draft").name, "qwen3.5-9b")
 
-    def test_phase_env_unknown(self):
+    def test_phase_env_unknown_alias_becomes_raw_id(self):
         os.environ["LLM_MODEL_DRAFT"] = "bogus"
         Config._instance = None
-        self.assertIsNotNone(Config().model_for_phase("draft").name)
+        self.assertEqual(Config().model_for_phase("draft").name, "bogus")
 
     def test_missing_key_raises(self):
         os.environ.pop("LLM_API_KEY", None)
@@ -260,8 +261,8 @@ class TestConfigRouting(unittest.TestCase):
     def test_phase_unknown(self):   self.assertIsNotNone(Config().model_for_phase("bogus").name)
     def test_interview_override(self):
         self.assertEqual(Config().model_for_interview("concept_premise", override="flash").name, "qwen3.5-9b")
-    def test_interview_bad_override(self):
-        self.assertEqual(Config().model_for_interview("concept_premise", override="nope").name, "deepseek-v4-pro-precision")
+    def test_interview_override_raw_id(self):
+        self.assertEqual(Config().model_for_interview("concept_premise", override="nope").name, "nope")
     def test_print_routing(self):
         with patch("sys.stdout"): Config().print_routing_plan()
     def test_embeddings_disabled_noop(self):

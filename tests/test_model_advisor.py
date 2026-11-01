@@ -42,14 +42,19 @@ class TestModelAdvisor(unittest.TestCase):
         finally:
             del os.environ["LLM_MODEL_DRAFT"]
 
-    def test_env_override_unknown_alias_falls_back(self):
-        """Unknown alias in env var falls back to default routing."""
-        os.environ["LLM_MODEL_DRAFT"] = "nonexistent-alias"
+    def test_env_override_raw_model_id_is_honored(self):
+        """A value that is not a known alias is used as a raw model id.
+
+        This is what makes every role assignable to any provider's model
+        without editing config.py. The resolution is labeled env-raw and
+        noted on stderr, so a typo is visible instead of silently dropped.
+        """
+        os.environ["LLM_MODEL_DRAFT"] = "gpt-5.2"
         try:
             Config._instance = None
             c = Config()
-            # Falls back to phase_models["draft"] which is "kimi-precision"
-            self.assertEqual(c.model_for_phase("draft").name, "kimi-k2.6-precision")
+            self.assertEqual(c.model_for_phase("draft").name, "gpt-5.2")
+            self.assertEqual(c.resolution_log[-1]["source"], "env-raw")
         finally:
             del os.environ["LLM_MODEL_DRAFT"]
 

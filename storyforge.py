@@ -48,7 +48,7 @@ from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import Config
+from config import Config, VERSION
 from pipeline.seed import run_seed
 from pipeline.worldbuilding import run_worldbuilding
 from pipeline.characters import run_characters
@@ -650,7 +650,7 @@ def _launch_pipeline(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="StoryForge v0.3 - autonomous novel-writing pipeline with GBrain, rhetorical strategies, ReIO, iterative backprop"
+        description=f"StoryForge {VERSION} - autonomous novel-writing pipeline: interview, plan, draft, review, backpropagate, export"
     )
     parser.add_argument(
         "concept",
@@ -799,6 +799,21 @@ def main():
         help="Memory store backend for interview answers (default: json)",
     )
     parser.add_argument(
+        "--doctor",
+        action="store_true",
+        help="Print the orientation report (version, provider, role routing, project state, guards, next command) and exit. Needs no API key.",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="With --doctor, print the report as JSON instead of prose.",
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="With --doctor or --show-models, also ask the provider which model ids it serves.",
+    )
+    parser.add_argument(
         "--show-models",
         action="store_true",
         help="Print the model routing plan (which model handles which role) and exit. "
@@ -807,7 +822,17 @@ def main():
 
     args = parser.parse_args()
 
-    # --show-models: print routing plan and exit (does not require API key)
+    # Orientation and routing reports exit here: neither needs an API key.
+    if args.doctor:
+        import doctor
+        project_dir = os.path.abspath(args.resume or args.project_dir) if (args.resume or args.project_dir) else None
+        report = doctor.collect(project_dir=project_dir, live=args.live)
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            print(doctor.render(report))
+        return
+
     if args.show_models:
         Config().print_routing_plan()
         return
